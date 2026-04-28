@@ -29,11 +29,19 @@ jobs:
           sudo apt-get install -y pkg-config python3-pip patchelf libgomp1
           python3 -m pip install --user --break-system-packages xgboost==3.0.0
           XGBOOST_PY=$(python3 -c 'import os, xgboost; print(os.path.dirname(xgboost.__file__))')
-          sudo install -m 0644 "$XGBOOST_PY/lib/libxgboost.so" /usr/lib/x86_64-linux-gnu/
-          # The wheel-built .so doesn't carry DT_NEEDED libgomp.so.1
-          # (the apt-built one does); add it so libgomp gets pulled in
-          # transitively when downstream code links against libxgboost.
-          sudo patchelf --add-needed libgomp.so.1 /usr/lib/x86_64-linux-gnu/libxgboost.so
+          # The wheel ships a self-contained lib/ directory: a
+          # libxgboost.so plus a vendored, hash-name-mangled libgomp.
+          # Drop both into a dedicated dir and configure ldconfig to
+          # search there, rather than mixing them with system libs.
+          sudo mkdir -p /usr/local/lib/xgboost-wheel
+          sudo cp -a "$XGBOOST_PY/lib/." /usr/local/lib/xgboost-wheel/
+          # Symlink libxgboost.so into a standard ldconfig path with a
+          # canonical name; -lxgboost still finds it.
+          sudo ln -sf /usr/local/lib/xgboost-wheel/libxgboost.so \
+                      /usr/lib/x86_64-linux-gnu/libxgboost.so
+          # Tell ldconfig about the wheel's lib dir so the bundled
+          # libgomp (mangled name) is discovered at runtime.
+          echo /usr/local/lib/xgboost-wheel | sudo tee /etc/ld.so.conf.d/xgboost-wheel.conf > /dev/null
           # Headers from the matching upstream tag
           git clone --depth 1 --branch v3.0.0 https://github.com/dmlc/xgboost.git /tmp/xgboost-src
           sudo cp -r /tmp/xgboost-src/include/xgboost /usr/include/
