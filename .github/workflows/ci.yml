@@ -16,6 +16,15 @@ jobs:
 
     runs-on: ${{ matrix.os }}
 
+    env:
+      # Run libxgboost single-threaded so the test suite is fully
+      # deterministic. Hist OpenMP reduction order varies with chunk
+      # size and thread count, which makes a few qcheck properties
+      # (slice consistency, model-buffer round-trip) drift by ~1e-4
+      # — the binding is correct, libxgboost just has FP noise. Pin
+      # threads to 1 in CI; bench harness can override.
+      OMP_NUM_THREADS: "1"
+
     steps:
       - uses: actions/checkout@v4
 
