@@ -363,4 +363,5 @@ it's on a hot path. The plan-vs-reality audit lives in
 
 ## License
 
-MIT. See [LICENSE](LICENSE) (forthcoming).
+MIT. See [LICENSE](LICENSE). libxgboost itself is Apache-2.0 and is
+linked dynamically; this binding does not redistribute its source.
