@@ -26,10 +26,14 @@ jobs:
           # Python wheel (which carries a prebuilt libxgboost.so) and
           # take the headers from the matching source tag.
           sudo apt-get update
-          sudo apt-get install -y pkg-config python3-pip
+          sudo apt-get install -y pkg-config python3-pip patchelf libgomp1
           python3 -m pip install --user --break-system-packages xgboost==3.0.0
           XGBOOST_PY=$(python3 -c 'import os, xgboost; print(os.path.dirname(xgboost.__file__))')
           sudo install -m 0644 "$XGBOOST_PY/lib/libxgboost.so" /usr/lib/x86_64-linux-gnu/
+          # The wheel-built .so doesn't carry DT_NEEDED libgomp.so.1
+          # (the apt-built one does); add it so libgomp gets pulled in
+          # transitively when downstream code links against libxgboost.
+          sudo patchelf --add-needed libgomp.so.1 /usr/lib/x86_64-linux-gnu/libxgboost.so
           # Headers from the matching upstream tag
           git clone --depth 1 --branch v3.0.0 https://github.com/dmlc/xgboost.git /tmp/xgboost-src
           sudo cp -r /tmp/xgboost-src/include/xgboost /usr/include/
@@ -43,10 +47,7 @@ jobs:
           Name: xgboost
           Description: XGBoost gradient boosting library
           Version: 3.0.0
-          # The apt-built libxgboost.so on Debian carries DT_NEEDED
-          # libgomp.so.1; the wheel's .so does not, so we add -lgomp
-          # explicitly to satisfy the linker for OpenMP symbols.
-          Libs: -L${libdir} -lxgboost -lgomp
+          Libs: -L${libdir} -lxgboost
           Cflags: -I${includedir}
           EOF
           sudo ldconfig
