@@ -39,6 +39,48 @@ W7 streaming overhead is ~6 ms per batch on the dev box, dominated by
 the per-batch slice-copy in the bench harness (synthetic; real
 streaming use would already have batches in their own Bigarrays).
 
+## Phase 6 (of_bigarray2 modernisation, C ref also modernised) — current
+
+After Phase 5 closed the W6 gap by migrating `Xgboost.DMatrix.of_csr`
+to `XGDMatrixCreateFromCSR`, the bench grid showed Python beating the
+C reference on W5 — the cause was the C reference still using the
+deprecated `XGDMatrixCreateFromMat` while Python uses the modern
+`XGDMatrixCreateFromDense`. Probe (same machine, all sizes 100k×100):
+
+| Workload | C, legacy entry point | C, modern entry point |
+|----------|----------------------:|----------------------:|
+| W5 dense | 60.7 ms (`FromMat`)   | 39.4 ms (`FromDense`) |
+| W6 CSR   |  5.78 ms (`CSREx`)    |  3.85 ms (`FromCSR`)  |
+
+The legacy paths in libxgboost 3.0 are ~30–35% slower than the
+modern ones. Both bin/c_reference/perf.c and bench/bindings/perf.ml
+now use the modern entry points by default; the binding's
+`Xgboost.DMatrix.of_bigarray2` was migrated alongside.
+
+**Updated W1–W6 grid (everyone on the modern API):**
+
+| Workload | C ref | OCaml (raw) | OCaml | Python |
+|----------|------:|------------:|------:|-------:|
+| W1 train tiny                                    |  135 ms |  148 ms |  179 ms |  146 ms |
+| W2 train (100k×50, 30 iters logistic hist)       |  434 ms |  428 ms |  458 ms |  434 ms |
+| W3 batch predict 100k                            |  13.4 ms |  12.8 ms |  11.8 ms |  11.8 ms |
+| W4 online predict 10k single-row in loop         |  353 ms |  375 ms |  526 ms | 2611 ms |
+| W5 DMatrix-from-dense 100k×100                   |   41 ms |   39 ms |   38 ms |   43 ms |
+| W6 DMatrix-from-CSR 100k×100, 5%                 |  4.0 ms |  4.5 ms |  5.0 ms |  3.3 ms |
+
+**W5 outcome:** OCaml binding now leads (38 ms vs C-ref 41, Python
+43). Was 76 ms before this phase, ~2× faster after.
+
+**W4 regression:** OCaml went 392 → 526 ms on the W4 pattern
+(creating a fresh DMatrix per single-row predict in a tight loop).
+The cost is the per-call `Printf.sprintf` of the JSON
+`__array_interface__` plus libxgboost's per-call JSON parsing, ×10k
+iterations. For online inference loops the recommended path is
+`Booster.predict_dense` (skips the DMatrix entirely); for batch
+predict the existing `predict` path is fastest. The W4 benchmark
+intentionally measures the worst-case "loop with DMatrix per call"
+pattern.
+
 ## Phase 5 (of_csr modernisation) — current
 
 `Xgboost.DMatrix.of_csr` switched from the legacy

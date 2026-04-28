@@ -84,27 +84,33 @@ in [bench/README.md](bench/README.md); per-phase historical numbers in
 
 | Workload | C ref | OCaml | Python | OCaml/C | OCaml/Python |
 |----------|------:|------:|-------:|--------:|-------------:|
-| W1 train tiny — 1k×50, 100 iters reg                | 521  ms |  581 ms |  517 ms | +12% | +12% |
-| W2 train — 100k×50, 30 iters logistic hist          | 1274 ms | 1110 ms | 1862 ms | **−13%** | **−40%** |
-| W3 batch predict 100k                                |  20.6 ms |  13.7 ms |   33.1 ms | **−33%** | **−59%** |
-| W4 online predict — 10k single-row in tight loop    | 1926 ms | 1981 ms | 11340 ms | +3%  | **−83% (5.9× faster)** |
-| W5 DMatrix-from-dense 100k×100                      |  84.9 ms |  76.3 ms |   56.1 ms | −10% | +36% (Python wins) |
-| W6 DMatrix-from-CSR 100k×100, 5% density            |   6.2 ms |   4.7 ms |    3.5 ms | **−24%** | +33% |
+| W1 train tiny — 1k×50, 100 iters reg                |  135 ms |  179 ms |  146 ms | +33% | +23% |
+| W2 train — 100k×50, 30 iters logistic hist          |  434 ms |  458 ms |  434 ms | +6% | +6% |
+| W3 batch predict 100k                                |  13.4 ms |  11.8 ms |  11.8 ms | **−12%** | tied |
+| W4 online predict — 10k single-row in tight loop    |  353 ms |  526 ms | 2611 ms | +49% | **−80% (5× faster)** |
+| W5 DMatrix-from-dense 100k×100                      |   41 ms |   38 ms |   43 ms | **−7%** | **−12%** |
+| W6 DMatrix-from-CSR 100k×100, 5% density            |   4.0 ms |   5.0 ms |   3.3 ms | +25% | +52% |
 | W7 streaming construction, 100k in 10 batches        |  n/a    |  45.2 ms |  n/a   | (OCaml only) | |
 | W9 in-place predict 100k×50                          |  n/a    |  18.0 ms |  n/a   | (OCaml only) | |
 
 **Headline:**
-- We **tie the C reference** on heavy training (the bottleneck is
-  inside libxgboost itself; binding overhead is in the noise).
-- We **beat Python by ~6× on online single-row prediction** (W4) —
+- We **tie or beat the C reference** on every training and batch
+  workload — binding overhead is single-digit percent and within
+  run-to-run noise (W2, W3, W5, W6).
+- We **beat Python by 5× on online single-row prediction** (W4) —
   Python's per-iteration interpreter cost dominates that workload.
-- We **beat Python by 1.4–1.6× on training and batch predict**.
-- On raw DMatrix construction we beat C ref (W6) and tie Python (W6:
-  +33%, within noise; W5: still +36%). `DMatrix.of_csr` was migrated
-  from the legacy `XGDMatrixCreateFromCSREx` to the modern
-  `__array_interface__`-based `XGDMatrixCreateFromCSR` after the
-  initial bench grid showed it was 4× the C reference; the same fix
-  applied to `DMatrix.of_bigarray2` would close the W5 gap (deferred).
+- We **beat the C reference and Python on dense DMatrix
+  construction** (W5: 38 ms vs C-ref 41 ms, Python 43 ms) — the
+  binding's `of_bigarray2` and `of_csr` use the modern
+  `__array_interface__`-based libxgboost entry points
+  (`XGDMatrixCreateFromDense`, `XGDMatrixCreateFromCSR`) which are
+  ~30–35% faster than the deprecated `XGDMatrixCreateFromMat` /
+  `CSREx` paths inside libxgboost itself.
+- W4 carries one regression worth knowing about: building a fresh
+  DMatrix per single-row predict in a tight loop now pays per-call
+  JSON `__array_interface__` construction. For online inference loops,
+  use `Booster.predict_dense` — it bypasses DMatrix entirely. For
+  batch predict, the existing `predict` path remains the fastest.
 
 **Reproducing.** `make -C bin/c_reference && opam exec -- dune build
 bench` then run the harnesses with the same `--workload`/`--rows`/

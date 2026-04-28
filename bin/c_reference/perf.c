@@ -327,7 +327,12 @@ static uint64_t run_W4(const opts *o) {
   return ns;
 }
 
-/* ---------- W5: DMatrix from dense ---------- */
+/* ---------- W5: DMatrix from dense ----------
+ * Uses the modern XGDMatrixCreateFromDense (JSON __array_interface__).
+ * The deprecated XGDMatrixCreateFromMat is ~30-35% slower in libxgboost
+ * 3.0 and is what `Xgboost.DMatrix.of_bigarray2` used to call until
+ * we modernised it; matching the binding here keeps the bench grid
+ * apples-to-apples. */
 
 static uint64_t run_W5(const opts *o) {
   xs32 s = o->seed;
@@ -335,11 +340,17 @@ static uint64_t run_W5(const opts *o) {
   if (!data) { fprintf(stderr, "W5: oom\n"); abort(); }
   gen_dense(data, o->rows, o->cols, &s);
 
+  char interface[256];
+  snprintf(interface, sizeof interface,
+           "{\"data\":[%llu,false],\"shape\":[%zu,%zu],"
+           "\"strides\":null,\"typestr\":\"<f4\",\"version\":3}",
+           (unsigned long long)(uintptr_t)data, o->rows, o->cols);
+  const char *config = "{\"missing\":NaN}";
+
   DMatrixHandle d = NULL;
   bench_timer t;
   timer_start(&t);
-  XGB_OK(XGDMatrixCreateFromMat(data, (bst_ulong)o->rows, (bst_ulong)o->cols,
-                                NAN, &d));
+  XGB_OK(XGDMatrixCreateFromDense(interface, config, &d));
   uint64_t ns = timer_elapsed_ns(&t);
 
   XGB_OK(XGDMatrixFree(d));
@@ -369,41 +380,55 @@ static uint64_t run_G3(const opts *o) {
   return ns;
 }
 
-/* ---------- W6: DMatrix from CSR ---------- */
+/* ---------- W6: DMatrix from CSR ----------
+ * Uses the modern XGDMatrixCreateFromCSR (JSON __array_interface__).
+ * The deprecated XGDMatrixCreateFromCSREx is the path the binding's
+ * `Xgboost.DMatrix.of_csr` used to take before modernisation; matching
+ * the binding here keeps the bench grid apples-to-apples. */
 
 static uint64_t run_W6(const opts *o) {
   xs32 s = o->seed;
-  /* upper bound nnz = rows * cols; we generate stochastically so allocate
-   * for the full dense to be safe and use only nnz of it. */
   uint64_t cap = (uint64_t)o->rows * (uint64_t)o->cols;
-  size_t *indptr = malloc((o->rows + 1) * sizeof(size_t));
-  unsigned *indices = malloc(cap * sizeof(unsigned));
+  uint64_t *indptr = malloc((o->rows + 1) * sizeof(uint64_t));
+  uint32_t *indices = malloc(cap * sizeof(uint32_t));
   float *values = malloc(cap * sizeof(float));
   if (!indptr || !indices || !values) {
     fprintf(stderr, "W6: oom\n");
     abort();
   }
-  /* gen_csr writes uint64_t indptr / uint32_t indices; for the deprecated
-   * CSREx call the C API expects size_t* indptr / unsigned* indices, so
-   * generate directly into those types here. */
   uint64_t nnz = 0;
   indptr[0] = 0;
   for (size_t r = 0; r < o->rows; ++r) {
     for (size_t c = 0; c < o->cols; ++c) {
       if (xs32_uniform(&s) < o->density) {
-        indices[nnz] = (unsigned)c;
+        indices[nnz] = (uint32_t)c;
         values[nnz] = xs32_uniform(&s);
         ++nnz;
       }
     }
-    indptr[r + 1] = (size_t)nnz;
+    indptr[r + 1] = nnz;
   }
+
+  char json_indptr[256], json_indices[256], json_data[256];
+  snprintf(json_indptr, sizeof json_indptr,
+           "{\"data\":[%llu,false],\"shape\":[%zu],"
+           "\"strides\":null,\"typestr\":\"<u8\",\"version\":3}",
+           (unsigned long long)(uintptr_t)indptr, (size_t)(o->rows + 1));
+  snprintf(json_indices, sizeof json_indices,
+           "{\"data\":[%llu,false],\"shape\":[%llu],"
+           "\"strides\":null,\"typestr\":\"<u4\",\"version\":3}",
+           (unsigned long long)(uintptr_t)indices, (unsigned long long)nnz);
+  snprintf(json_data, sizeof json_data,
+           "{\"data\":[%llu,false],\"shape\":[%llu],"
+           "\"strides\":null,\"typestr\":\"<f4\",\"version\":3}",
+           (unsigned long long)(uintptr_t)values, (unsigned long long)nnz);
+  const char *config = "{\"missing\":NaN}";
 
   DMatrixHandle d = NULL;
   bench_timer t;
   timer_start(&t);
-  XGB_OK(XGDMatrixCreateFromCSREx(indptr, indices, values, o->rows + 1,
-                                  (size_t)nnz, o->cols, &d));
+  XGB_OK(XGDMatrixCreateFromCSR(json_indptr, json_indices, json_data,
+                                (bst_ulong)o->cols, config, &d));
   uint64_t ns = timer_elapsed_ns(&t);
 
   XGB_OK(XGDMatrixFree(d));

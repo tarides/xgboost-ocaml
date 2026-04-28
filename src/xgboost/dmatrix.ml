@@ -61,11 +61,18 @@ let check_live t =
 let of_bigarray2 ?(missing = Float.nan) m =
   let rows = Bigarray.Array2.dim1 m in
   let cols = Bigarray.Array2.dim2 m in
+  (* Modern API path: pass the Bigarray buffer via a JSON
+     __array_interface__ string. Skips the per-row conversion that the
+     legacy XGDMatrixCreateFromMat does internally; the buffer is
+     pinned in the resulting DMatrix.t. *)
+  let json_data = Array_interface.dense_array2 m in
+  let missing_str =
+    if Float.is_nan missing then "NaN" else string_of_float missing
+  in
+  let config = Printf.sprintf {|{"missing":%s}|} missing_str in
   let h_out = Internal.alloc_dmatrix_handle () in
   Internal.xgb_check
-    (F.xgdmatrix_create_from_mat
-       (bigarray_start array2 m)
-       (Internal.ulong rows) (Internal.ulong cols) missing h_out);
+    (F.xgdmatrix_create_from_dense json_data config h_out);
   make ~handle:!@h_out ~rows ~cols ~pin:[ Obj.repr m ]
 
 let of_csr ~indptr ~indices ~data ~n_cols =

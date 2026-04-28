@@ -332,16 +332,34 @@ let run_W4 o =
   ignore (Sys.opaque_identity (m, labels, prow));
   elapsed
 
+(* Build a JSON __array_interface__ string for a Bigarray buffer.
+   Mirrors src/xgboost/array_interface.ml; duplicated here so this
+   bench harness doesn't take a dependency on the high-level library. *)
+let array_interface_2d_f32 m =
+  let rows = Bigarray.Array2.dim1 m in
+  let cols = Bigarray.Array2.dim2 m in
+  let addr =
+    Nativeint.to_string
+      (raw_address_of_ptr (to_voidp (bigarray_start array2 m)))
+  in
+  Printf.sprintf
+    {|{"data":[%s,false],"shape":[%d,%d],"strides":null,"typestr":"<f4","version":3}|}
+    addr rows cols
+
+let array_interface_1d typestr ptr_addr len =
+  Printf.sprintf
+    {|{"data":[%s,false],"shape":[%d],"strides":null,"typestr":"%s","version":3}|}
+    ptr_addr len typestr
+
 let run_W5 o =
   prng_state := o.seed;
   let m = big2 ~rows:o.rows ~cols:o.cols in
   fill2 m;
+  let json = array_interface_2d_f32 m in
+  let config = {|{"missing":NaN}|} in
   let dmat_out = allocate F.dmatrix_handle null in
   let t0 = now_ns () in
-  xgb_ok
-    (F.xgdmatrix_create_from_mat
-       (bigarray_start array2 m)
-       (ulong o.rows) (ulong o.cols) Float.nan dmat_out);
+  xgb_ok (F.xgdmatrix_create_from_dense json config dmat_out);
   let elapsed = elapsed_ns t0 in
   xgb_ok (F.xgdmatrix_free !@dmat_out);
   ignore (Sys.opaque_identity m);
@@ -349,37 +367,54 @@ let run_W5 o =
 
 let run_W6 o =
   prng_state := o.seed;
-  (* generate the CSR triplet directly into the right ctypes buffers *)
+  (* Generate CSR triplet into Bigarrays so we can pass their address
+     directly via __array_interface__ — no per-element copy. *)
   let cap = o.rows * o.cols in
-  let indptr = CArray.make size_t (o.rows + 1) in
-  let indices = CArray.make uint cap in
-  let values = CArray.make float cap in
+  let indptr =
+    Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout (o.rows + 1)
+  in
+  let indices_buf =
+    Bigarray.Array1.create Bigarray.int32 Bigarray.c_layout cap
+  in
+  let values_buf = big1 cap in
+  indptr.{0} <- 0L;
   let nnz = ref 0 in
-  CArray.set indptr 0 (Unsigned.Size_t.of_int 0);
   for r = 0 to o.rows - 1 do
     for c = 0 to o.cols - 1 do
       if next_uniform () < o.density then begin
-        CArray.set indices !nnz (Unsigned.UInt.of_int c);
-        CArray.set values !nnz (next_uniform ());
+        indices_buf.{!nnz} <- Int32.of_int c;
+        values_buf.{!nnz} <- next_uniform ();
         incr nnz
       end
     done;
-    CArray.set indptr (r + 1) (Unsigned.Size_t.of_int !nnz)
+    indptr.{r + 1} <- Int64.of_int !nnz
   done;
   let nnz = !nnz in
+  let indices = Bigarray.Array1.sub indices_buf 0 nnz in
+  let values = Bigarray.Array1.sub values_buf 0 nnz in
 
+  let addr_of_ba1 ba =
+    Nativeint.to_string
+      (raw_address_of_ptr (to_voidp (bigarray_start array1 ba)))
+  in
+  let json_indptr =
+    array_interface_1d "<i8" (addr_of_ba1 indptr) (o.rows + 1)
+  in
+  let json_indices =
+    array_interface_1d "<i4" (addr_of_ba1 indices) nnz
+  in
+  let json_values =
+    array_interface_1d "<f4" (addr_of_ba1 values) nnz
+  in
+  let config = {|{"missing":NaN}|} in
   let dmat_out = allocate F.dmatrix_handle null in
   let t0 = now_ns () in
   xgb_ok
-    (F.xgdmatrix_create_from_csr_ex
-       (CArray.start indptr) (CArray.start indices) (CArray.start values)
-       (Unsigned.Size_t.of_int (o.rows + 1))
-       (Unsigned.Size_t.of_int nnz)
-       (Unsigned.Size_t.of_int o.cols)
-       dmat_out);
+    (F.xgdmatrix_create_from_csr
+       json_indptr json_indices json_values (ulong o.cols) config dmat_out);
   let elapsed = elapsed_ns t0 in
   xgb_ok (F.xgdmatrix_free !@dmat_out);
-  ignore (Sys.opaque_identity (indptr, indices, values));
+  ignore (Sys.opaque_identity (indptr, indices_buf, values_buf));
   elapsed
 
 (* ---------- G3: FFI roundtrip microbench ----------
