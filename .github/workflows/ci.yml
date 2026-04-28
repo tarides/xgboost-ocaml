@@ -43,7 +43,10 @@ jobs:
           Name: xgboost
           Description: XGBoost gradient boosting library
           Version: 3.0.0
-          Libs: -L${libdir} -lxgboost
+          # The apt-built libxgboost.so on Debian carries DT_NEEDED
+          # libgomp.so.1; the wheel's .so does not, so we add -lgomp
+          # explicitly to satisfy the linker for OpenMP symbols.
+          Libs: -L${libdir} -lxgboost -lgomp
           Cflags: -I${includedir}
           EOF
           sudo ldconfig
