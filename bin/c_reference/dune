@@ -1,0 +1,7 @@
+; The C reference harness is built via the Makefile in this directory
+; (dune does not handle pure-C executables ergonomically). The Makefile
+; emits ./perf and ./check, which the bench scripts in scripts/run-bench.sh
+; invoke directly. Build via `make -C bin/c_reference`.
+
+; Mark these files as data-only for dune so they don't trigger compilation.
+(data_only_dirs)

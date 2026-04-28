@@ -1,0 +1,11 @@
+_build/
+.merlin
+*.install
+bench/results/*
+!bench/results/.gitkeep
+bin/c_reference/perf
+bin/c_reference/check
+*.o
+__pycache__/
+*.pyc
+.venv/

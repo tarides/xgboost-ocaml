@@ -1,0 +1,5 @@
+(executable
+ (name perf)
+ (package xgboost-bench)
+ (public_name xgboost-bench-bindings-perf)
+ (libraries xgboost_bindings ctypes mtime mtime.clock.os unix))

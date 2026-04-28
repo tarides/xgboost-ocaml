@@ -1,0 +1,3 @@
+(test
+ (name check)
+ (libraries xgboost_bindings ctypes alcotest))

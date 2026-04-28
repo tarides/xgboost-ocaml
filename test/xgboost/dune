@@ -1,0 +1,7 @@
+(test
+ (name check)
+ (libraries xgboost alcotest qcheck-core qcheck-alcotest))
+
+(test
+ (name props)
+ (libraries xgboost alcotest qcheck-core qcheck-alcotest))

@@ -1,0 +1,34 @@
+; Internal layer-B bindings for libxgboost via the dune ctypes plugin.
+;
+; The plugin reads <xgboost/c_api.h> via the system include path,
+; resolves cflags/libs through pkg-config, and emits static stubs.
+; Generated entry point is the [C] module; downstream code (the layer-C
+; library and tests/benches) uses [Xgboost_bindings.C.Functions].
+
+(library
+ (name xgboost_bindings)
+ (public_name xgboost.bindings)
+ (wrapped true)
+ (libraries ctypes)
+ (flags (:standard -w -9-27-32-33-37))
+ (ctypes
+  (external_library_name xgboost)
+  ; Use the [vendored] resolver rather than [pkg_config] so we can inject
+  ; the warning suppressions ctypes' generated stubs require: XGBoost
+  ; declares its borrowed-output pointers as `const T**`, but ctypes can
+  ; only emit non-const `T**` — the cast is benign and we silence the
+  ; corresponding -Wincompatible-pointer-types warning at the C compiler.
+  (build_flags_resolver
+   (vendored
+    (c_flags
+     -Wno-incompatible-pointer-types
+     -Wno-discarded-qualifiers)
+    (c_library_flags -lxgboost)))
+  (headers (preamble "#include <xgboost/c_api.h>"))
+  (type_description (instance Types) (functor Type_description))
+  (function_description
+   (concurrency sequential)
+   (instance Functions)
+   (functor Function_description))
+  (generated_types Types_generated)
+  (generated_entry_point C)))
