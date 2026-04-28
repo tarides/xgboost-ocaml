@@ -119,19 +119,38 @@ bench` then run the harnesses with the same `--workload`/`--rows`/
 
 ## Installation
 
-The binding requires a system install of libxgboost ≥ 3.0:
+> **System dependency** — this binding links against libxgboost at
+> compile time. Install it first; opam cannot do it for you.
 
 ```sh
-sudo apt install libxgboost-dev libxgboost0   # Debian/Ubuntu
-# or build from source per the upstream instructions
+# Debian / Ubuntu
+sudo apt install libxgboost-dev libxgboost0
+
+# Fedora
+sudo dnf install xgboost-devel
+
+# macOS
+brew install xgboost
+
+# or build from source: https://xgboost.readthedocs.io/en/stable/build.html
 ```
 
-Then build the OCaml side from this repo:
+The binding tracks libxgboost ≥ 3.0; older versions will fail to
+link or hit ABI mismatches.
+
+Then install the OCaml package:
 
 ```sh
-opam install . --with-test    # (once published; for now use a pin)
+# Once published to opam-repository:
+opam install xgboost
+
+# In the meantime, pin from the dev repo:
 opam pin add xgboost https://github.com/tarides/xgboost-ocaml.git
 ```
+
+The build uses `pkg-config` to discover libxgboost's cflags/libs. If
+your install lives outside the standard system paths, add it to
+`PKG_CONFIG_PATH` or `LIBRARY_PATH`/`C_INCLUDE_PATH`.
 
 ## Building from source
 

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        ocaml-version: ["5.1", "5.2", "5.3"]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libxgboost
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxgboost-dev libxgboost0 pkg-config
+
+      - name: Set up OCaml ${{ matrix.ocaml-version }}
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-version }}
+
+      - name: Install OCaml deps
+        run: opam install . --deps-only --with-test --yes
+
+      - name: Build
+        run: opam exec -- dune build -p xgboost -j 4
+
+      - name: Run tests
+        run: opam exec -- dune runtest -p xgboost -j 4
+
+      - name: Build C reference
+        run: make -C bin/c_reference
+
+      - name: Run tests under AddressSanitizer
+        run: ./scripts/run-asan.sh

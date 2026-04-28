@@ -9,12 +9,14 @@ upstream Python xgboost package on a fixed grid of workloads."""
 maintainer: ["Cuihtlauac ALVARADO <cuihtlauac@tarides.com>"]
 authors: ["Cuihtlauac ALVARADO <cuihtlauac@tarides.com>"]
 license: "MIT"
+tags: ["xgboost" "benchmark" "bechamel"]
 homepage: "https://github.com/tarides/xgboost-ocaml"
 bug-reports: "https://github.com/tarides/xgboost-ocaml/issues"
 depends: [
+  "dune" {>= "3.18"}
   "ocaml" {>= "5.1"}
-  "dune" {>= "3.16" & >= "3.16"}
   "xgboost"
+  "mtime" {>= "2.0"}
   "bechamel" {>= "0.5"}
   "bechamel-perf" {>= "0.5"}
   "bechamel-notty" {>= "0.5"}
@@ -35,3 +37,4 @@ build: [
   ]
 ]
 dev-repo: "git+https://github.com/tarides/xgboost-ocaml.git"
+x-maintenance-intent: ["(latest)"]
