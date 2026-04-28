@@ -81,6 +81,7 @@ let apply_defaults o =
   | "W5" | "W6" ->
       o.rows <- set_if_zero_int o.rows 100_000;
       o.cols <- set_if_zero_int o.cols 100
+  | "G3" -> o.iters <- set_if_zero_int o.iters 10_000_000
   | _ -> ()
 
 (* ---------- timing ---------- *)
@@ -381,6 +382,24 @@ let run_W6 o =
   ignore (Sys.opaque_identity (indptr, indices, values));
   elapsed
 
+(* ---------- G3: FFI roundtrip microbench ----------
+ * Calls XGBoostVersion --iters times in a tight loop. Pair with the C
+ * reference's G3 to read off per-call FFI overhead from layer B. *)
+let run_G3 o =
+  let n = if o.iters > 0 then o.iters else 10_000_000 in
+  let major = allocate int 0 in
+  let minor = allocate int 0 in
+  let patch = allocate int 0 in
+  let sink = ref 0 in
+  let t0 = now_ns () in
+  for _ = 1 to n do
+    F.xgboost_version major minor patch;
+    sink := !@major
+  done;
+  let elapsed = elapsed_ns t0 in
+  ignore (Sys.opaque_identity !sink);
+  elapsed
+
 let workloads =
   [
     "W1", run_W1;
@@ -389,6 +408,7 @@ let workloads =
     "W4", run_W4;
     "W5", run_W5;
     "W6", run_W6;
+    "G3", run_G3;
   ]
 
 (* ---------- stats ---------- *)

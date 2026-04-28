@@ -179,6 +179,92 @@ let test_csr () =
   Alcotest.(check int) "csr rows" n_rows (Xgboost.DMatrix.rows d);
   Alcotest.(check int) "csr cols" n_cols (Xgboost.DMatrix.cols d)
 
+let test_streaming_iterator () =
+  (* Build a 200-row dataset, then construct it twice: once as a single
+     dense Bigarray, once via the streaming iterator in 4 batches of 50
+     rows. Train boosters with identical params on both and compare
+     predictions on a held-out predict matrix — must be bit-identical
+     (same data, same seed, same hyperparams). *)
+  prng_state := 0x57_2E_A1l;
+  let rows = 200 and cols = 8 and n_batches = 4 in
+  let m = big2 ~rows ~cols in
+  fill2 m;
+  let labels = labels_binary m in
+  let batch_rows = rows / n_batches in
+
+  let make_booster dtrain =
+    let bst = Xgboost.Booster.create ~cache:[ dtrain ] () in
+    Xgboost.Booster.set_params bst
+      [
+        "objective", "binary:logistic";
+        "tree_method", "hist";
+        "max_depth", "4";
+        "seed", "0";
+        "verbosity", "0";
+      ];
+    for it = 0 to 9 do
+      Xgboost.Booster.update_one_iter bst ~iter:it ~dtrain
+    done;
+    bst
+  in
+
+  (* Baseline: single-shot dense DMatrix. *)
+  let dtrain_full = Xgboost.DMatrix.of_bigarray2 m in
+  Xgboost.DMatrix.set_label dtrain_full labels;
+  let bst_full = make_booster dtrain_full in
+  let preds_full = Xgboost.Booster.predict bst_full dtrain_full in
+
+  (* Streaming: feed [m] in [n_batches] consecutive 50-row slices. *)
+  let cursor = ref 0 in
+  let next () =
+    if !cursor >= n_batches then None
+    else begin
+      let start = !cursor * batch_rows in
+      let bm = big2 ~rows:batch_rows ~cols in
+      for r = 0 to batch_rows - 1 do
+        for c = 0 to cols - 1 do
+          bm.{r, c} <- m.{start + r, c}
+        done
+      done;
+      let bl = big1 batch_rows in
+      for r = 0 to batch_rows - 1 do
+        bl.{r} <- labels.{start + r}
+      done;
+      incr cursor;
+      Some Xgboost.DMatrix.{ data = Batch_dense bm; labels = Some bl }
+    end
+  in
+  let reset () = cursor := 0 in
+  let dtrain_iter = Xgboost.DMatrix.of_iterator ~next ~reset () in
+  Alcotest.(check int) "iterator-built rows" rows
+    (Xgboost.DMatrix.rows dtrain_iter);
+  Alcotest.(check int) "iterator-built cols" cols
+    (Xgboost.DMatrix.cols dtrain_iter);
+  let bst_iter = make_booster dtrain_iter in
+  let preds_iter = Xgboost.Booster.predict bst_iter dtrain_full in
+
+  let max_diff = ref 0.0 in
+  for i = 0 to Bigarray.Array1.dim preds_full - 1 do
+    let d = Float.abs (preds_full.{i} -. preds_iter.{i}) in
+    if d > !max_diff then max_diff := d
+  done;
+  Alcotest.(check (float 1e-5))
+    "streaming and single-shot trainings agree" 0.0 !max_diff
+
+let test_predict_dense_agrees_with_predict () =
+  let m, _, dtrain, bst = train_simple ~seed:0xD3115El () in
+  let p_via_dmat = Xgboost.Booster.predict bst dtrain in
+  let p_inplace = Xgboost.Booster.predict_dense bst m in
+  Alcotest.(check int) "lengths match"
+    (Bigarray.Array1.dim p_via_dmat) (Bigarray.Array1.dim p_inplace);
+  let max_diff = ref 0.0 in
+  for i = 0 to Bigarray.Array1.dim p_via_dmat - 1 do
+    let d = Float.abs (p_via_dmat.{i} -. p_inplace.{i}) in
+    if d > !max_diff then max_diff := d
+  done;
+  Alcotest.(check (float 1e-5))
+    "predict_dense agrees with predict via DMatrix" 0.0 !max_diff
+
 let test_double_free_safe () =
   let m = big2 ~rows:5 ~cols:3 in
   let d = Xgboost.DMatrix.of_bigarray2 m in
@@ -203,6 +289,9 @@ let () =
           Alcotest.test_case "json_config_round_trip" `Quick
             test_json_config_round_trip;
           Alcotest.test_case "csr" `Quick test_csr;
+          Alcotest.test_case "streaming_iterator" `Quick test_streaming_iterator;
+          Alcotest.test_case "predict_dense_agrees" `Quick
+            test_predict_dense_agrees_with_predict;
           Alcotest.test_case "double_free_safe" `Quick
             test_double_free_safe;
         ] );

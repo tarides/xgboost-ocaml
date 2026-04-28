@@ -1,4 +1,4 @@
 (library
  (name xgboost)
  (public_name xgboost)
- (libraries xgboost_bindings ctypes))
+ (libraries xgboost_bindings ctypes ctypes-foreign))

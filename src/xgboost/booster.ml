@@ -121,6 +121,47 @@ let predict ?(ntree_limit = 0) ?(training = false) t dmat =
   let src = !@out_result in
   Internal.copy_borrowed_float32 ~len ~src
 
+(* In-place predict from a Bigarray.Array2. Avoids allocating a transient
+   DMatrix per call — useful for tight inference loops. The input is
+   passed to libxgboost as a JSON __array_interface__ pointing into the
+   Bigarray's memory; we keep the Bigarray reachable across the call. *)
+let predict_dense ?(ntree_limit = 0) ?(training = false)
+    ?(missing = Float.nan) t m =
+  check_live t;
+  let values_json = Array_interface.dense_array2 m in
+  (* JSON config: type=0 (normal predict), iteration_end=ntree_limit
+     (0 means all), strict_shape=false (we compute total length from
+     out_shape). NaN literal is accepted by RapidJSON. *)
+  let missing_str =
+    if Float.is_nan missing then "NaN"
+    else if missing = Float.infinity then "Infinity"
+    else if missing = Float.neg_infinity then "-Infinity"
+    else string_of_float missing
+  in
+  let config_json =
+    Printf.sprintf
+      {|{"type":0,"training":%b,"iteration_begin":0,"iteration_end":%d,"strict_shape":false,"missing":%s}|}
+      training ntree_limit missing_str
+  in
+  let out_shape =
+    allocate (ptr uint64_t) (from_voidp uint64_t null)
+  in
+  let out_dim = allocate uint64_t Unsigned.UInt64.zero in
+  let out_result = allocate (ptr float) (from_voidp float null) in
+  Internal.xgb_check
+    (F.xgbooster_predict_from_dense t.handle values_json config_json
+       null out_shape out_dim out_result);
+  ignore (Sys.opaque_identity m);
+  let dim = Internal.ulong_to_int !@out_dim in
+  let shape_ptr = !@out_shape in
+  let total = ref 1 in
+  for i = 0 to dim - 1 do
+    total := !total * Internal.ulong_to_int !@(shape_ptr +@ i)
+  done;
+  let len = !total in
+  let src = !@out_result in
+  Internal.copy_borrowed_float32 ~len ~src
+
 let save_model t ~path =
   check_live t;
   Internal.xgb_check (F.xgbooster_save_model t.handle path)

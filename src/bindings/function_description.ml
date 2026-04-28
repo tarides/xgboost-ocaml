@@ -126,6 +126,17 @@ module Functions (F : Ctypes.FOREIGN) = struct
       (booster_handle @-> dmatrix_handle @-> int @-> uint @-> int
       @-> ptr bst_ulong @-> ptr (ptr float) @-> returning int)
 
+  (* Modern in-place predict path. [values] is a JSON-encoded
+     __array_interface__ object describing the input pointer and shape.
+     [m] may be NULL or a proxy DMatrix carrying meta info. The output
+     shape is written through [out_shape] (a borrowed const bst_ulong*
+     of length out_dim) and the predictions through [out_result]. *)
+  let xgbooster_predict_from_dense =
+    foreign "XGBoosterPredictFromDense"
+      (booster_handle @-> string @-> string @-> dmatrix_handle
+      @-> ptr (ptr bst_ulong) @-> ptr bst_ulong @-> ptr (ptr float)
+      @-> returning int)
+
   (* ----- Persistence ----- *)
 
   let xgbooster_save_model =

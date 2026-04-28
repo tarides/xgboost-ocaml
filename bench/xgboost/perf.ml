@@ -70,6 +70,14 @@ let apply_defaults o =
   | "W5" | "W6" ->
       o.rows <- setz o.rows 100_000;
       o.cols <- setz o.cols 100
+  | "W7" ->
+      o.rows <- setz o.rows 1_000_000;
+      o.cols <- setz o.cols 50;
+      o.iters <- setz o.iters 50
+  | "W9" ->
+      o.rows <- setz o.rows 1_000_000;
+      o.cols <- setz o.cols 100;
+      o.iters <- setz o.iters 100
   | _ -> ()
 
 (* ---------- timing ---------- *)
@@ -294,6 +302,79 @@ let run_W6 o =
   ignore (Sys.opaque_identity (indptr, indices_buf, data_buf));
   elapsed
 
+(* W7: streaming-iterator construction.
+   Default: 1M rows × 50 cols in 50 batches of 20k. Measures the
+   end-to-end cost of of_iterator + per-batch JSON construction +
+   labels propagation, exclusive of training. *)
+let run_W7 o =
+  prng_state := o.seed;
+  let total_rows = o.rows in
+  let cols = o.cols in
+  let n_batches = max 1 (o.iters) in
+  let batch_rows = total_rows / n_batches in
+  let actual_rows = batch_rows * n_batches in
+
+  (* Pre-generate the full dataset so the timed region only measures
+     iterator overhead, not random-data generation. *)
+  let m_full = big2 ~rows:actual_rows ~cols in
+  fill2 m_full;
+  let labels_full = labels_binary m_full in
+
+  let cursor = ref 0 in
+  let next () =
+    if !cursor >= n_batches then None
+    else begin
+      let start = !cursor * batch_rows in
+      (* Slice into a fresh batch Bigarray each call to mimic real
+         streaming (the user can't share a buffer with libxgboost). *)
+      let bm = big2 ~rows:batch_rows ~cols in
+      for r = 0 to batch_rows - 1 do
+        for c = 0 to cols - 1 do
+          bm.{r, c} <- m_full.{start + r, c}
+        done
+      done;
+      let bl = big1 batch_rows in
+      for r = 0 to batch_rows - 1 do
+        bl.{r} <- labels_full.{start + r}
+      done;
+      incr cursor;
+      Some Xgboost.DMatrix.{ data = Batch_dense bm; labels = Some bl }
+    end
+  in
+  let reset () = cursor := 0 in
+
+  let t0 = now_ns () in
+  let d = Xgboost.DMatrix.of_iterator ~next ~reset () in
+  let elapsed = elapsed_ns t0 in
+  Xgboost.DMatrix.free d;
+  ignore (Sys.opaque_identity (m_full, labels_full));
+  elapsed
+
+(* W9: in-place predict vs predict-through-DMatrix.
+   Train as W2/W3, then time a batch predict on a fresh predict matrix
+   either via [Booster.predict_dense] (in-place, this run) or via
+   [Booster.predict] on a transient DMatrix (covered by W3). *)
+let run_W9 o =
+  let m, labels, dtrain, bst =
+    train_model_binary ~rows:o.rows ~cols:o.cols ~iters:o.iters o.seed
+  in
+  prng_state := Int32.logxor o.seed 0xA5A5A5A5l;
+  let pm = big2 ~rows:o.rows ~cols:o.cols in
+  fill2 pm;
+
+  let t0 = now_ns () in
+  let preds = Xgboost.Booster.predict_dense bst pm in
+  let n = Bigarray.Array1.dim preds in
+  let sink = ref 0.0 in
+  for i = 0 to n - 1 do sink := !sink +. preds.{i} done;
+  let elapsed = elapsed_ns t0 in
+  ignore (Sys.opaque_identity !sink);
+
+  Xgboost.DMatrix.free dtrain;
+  Xgboost.Booster.free bst;
+  ignore (Sys.opaque_identity (m, labels, pm));
+  elapsed
+
 let workloads =
   [
     "W1", run_W1;
@@ -302,6 +383,8 @@ let workloads =
     "W4", run_W4;
     "W5", run_W5;
     "W6", run_W6;
+    "W7", run_W7;
+    "W9", run_W9;
   ]
 
 (* ---------- main ---------- *)

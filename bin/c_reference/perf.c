@@ -135,6 +135,8 @@ static void apply_workload_defaults(opts *o) {
   } else if (!strcmp(o->workload, "W6")) {
     if (!o->rows) o->rows = 100000;
     if (!o->cols) o->cols = 100;
+  } else if (!strcmp(o->workload, "G3")) {
+    if (!o->iters) o->iters = 10000000;
   }
 }
 
@@ -345,6 +347,28 @@ static uint64_t run_W5(const opts *o) {
   return ns;
 }
 
+/* ---------- G3: FFI roundtrip microbench (XGBoostVersion) ----------
+ * Per the gap-filling plan in BENCH.md: time --iters calls to the
+ * cheapest libxgboost symbol (XGBoostVersion writes 3 ints from compile-
+ * time constants, no allocation, no logger). Subtracting this from
+ * heavier workload timings exposes per-call FFI overhead. */
+
+static uint64_t run_G3(const opts *o) {
+  size_t n = o->iters > 0 ? (size_t)o->iters : 10000000;
+  int maj = 0, min = 0, pat = 0;
+  /* Force the compiler to keep the loop body live. */
+  volatile int sink_maj = 0;
+  bench_timer t;
+  timer_start(&t);
+  for (size_t i = 0; i < n; ++i) {
+    XGBoostVersion(&maj, &min, &pat);
+    sink_maj = maj;
+  }
+  uint64_t ns = timer_elapsed_ns(&t);
+  (void)sink_maj;
+  return ns;
+}
+
 /* ---------- W6: DMatrix from CSR ---------- */
 
 static uint64_t run_W6(const opts *o) {
@@ -400,6 +424,7 @@ static workload_fn lookup_workload(const char *name) {
   if (!strcmp(name, "W4")) return run_W4;
   if (!strcmp(name, "W5")) return run_W5;
   if (!strcmp(name, "W6")) return run_W6;
+  if (!strcmp(name, "G3")) return run_G3;
   return NULL;
 }
 

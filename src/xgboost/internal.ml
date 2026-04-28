@@ -37,18 +37,29 @@ let with_out_int f =
 (* For functions that emit a borrowed [const float**] of length [out_len]:
  * copy [len] floats into a fresh OCaml-owned Bigarray.Array1 of float32.
  * The borrowed pointer is invalidated by the next call on the same
- * booster, so we copy eagerly. *)
+ * booster, so we copy eagerly.
+ *
+ * Implementation: wrap the borrowed pointer as a temporary Bigarray view
+ * and call [Bigarray.Array1.blit], which is implemented as memcpy when
+ * the source and destination kind/layout match. Replaces an earlier
+ * element-by-element loop that was costing ~4ns/elem (W3 was 5pt over
+ * the +30% Phase-2 gate; the loop was the smoking gun, see G3 + W3
+ * decomposition in BENCH.md). *)
 let copy_borrowed_float32 ~len ~src =
-  let ba =
+  let dst =
     Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout len
   in
-  let dst = bigarray_start array1 ba in
-  for i = 0 to len - 1 do
-    (dst +@ i) <-@ !@(src +@ i)
-  done;
-  ba
+  if len > 0 then begin
+    let view =
+      bigarray_of_ptr array1 len Bigarray.Float32 src
+    in
+    Bigarray.Array1.blit view dst
+  end;
+  dst
 
-(* Copy [len] bytes from a borrowed [const char*] into fresh OCaml [bytes]. *)
+(* Copy [len] bytes from a borrowed [const char*] into fresh OCaml [bytes].
+ * Used only for save_model_buffer and save_json_config (infrequent
+ * per-model calls), so the element loop is fine. *)
 let copy_borrowed_bytes ~len ~src =
   let buf = Bytes.create len in
   for i = 0 to len - 1 do

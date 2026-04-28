@@ -34,6 +34,22 @@ let make ~handle ~rows ~cols ~pin =
     t;
   t
 
+(* Same as [make] but invokes [extra_free ()] right after the C handle
+   is freed. Used by the streaming iterator path to also free the proxy
+   DMatrix that backs the iteration. *)
+let make_with_extra_free ~handle ~rows ~cols ~pin ~extra_free =
+  let freed = ref false in
+  let t = { handle; rows; cols; pin; freed } in
+  Gc.finalise_last
+    (fun () ->
+      if not !freed then begin
+        freed := true;
+        ignore (F.xgdmatrix_free handle);
+        extra_free ()
+      end)
+    t;
+  t
+
 let rows t = t.rows
 let cols t = t.cols
 let handle t = t.handle

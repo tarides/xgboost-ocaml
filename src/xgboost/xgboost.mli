@@ -55,6 +55,44 @@ module DMatrix : sig
     n_cols:int ->
     t
 
+  (** A single batch of data fed by an iterator into the streaming
+      construction path. *)
+  type batch =
+    | Batch_dense of
+        (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array2.t
+    | Batch_csr of {
+        indptr :
+          (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t;
+        indices :
+          (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t;
+        data :
+          (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t;
+        n_cols : int;
+      }
+
+  type labelled_batch = {
+    data : batch;
+    labels :
+      (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t
+      option;
+  }
+
+  (** [of_iterator ?cache_prefix ?missing ~next ~reset ()] builds a
+      DMatrix by repeatedly calling [next ()] until it returns [None].
+      Each batch's source Bigarrays are pinned for the duration of the
+      libxgboost call that consumes them. With a non-empty
+      [cache_prefix], libxgboost spills batches to disk and the
+      iterator may be re-invoked during prediction (external memory
+      mode); the iterator state must therefore remain meaningful for
+      the lifetime of the returned DMatrix. *)
+  val of_iterator :
+    ?cache_prefix:string ->
+    ?missing:float ->
+    next:(unit -> labelled_batch option) ->
+    reset:(unit -> unit) ->
+    unit ->
+    t
+
   (** Set the [label] field used for supervised training. The Bigarray
       length must equal [rows t]. *)
   val set_label :
@@ -118,6 +156,19 @@ module Booster : sig
     ?training:bool ->
     t ->
     DMatrix.t ->
+    (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t
+
+  (** [predict_dense ?missing t m] runs prediction directly against the
+      Bigarray [m] without allocating a DMatrix. Useful for tight
+      inference loops where DMatrix construction overhead would
+      dominate. The input Bigarray is pinned for the duration of the
+      call only. *)
+  val predict_dense :
+    ?ntree_limit:int ->
+    ?training:bool ->
+    ?missing:float ->
+    t ->
+    (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array2.t ->
     (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t
 
   val save_model : t -> path:string -> unit
