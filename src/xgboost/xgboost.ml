@@ -1,5 +1,11 @@
 module Error = Error
 
+module Result = struct
+  let try_ f =
+    try Stdlib.Result.Ok (f ())
+    with Error.Xgboost_error e -> Stdlib.Result.Error e
+end
+
 module DMatrix = struct
   include Dmatrix
 

@@ -71,6 +71,34 @@ let update_one_iter t ~iter ~dtrain =
       Internal.xgb_check
         (F.xgbooster_update_one_iter t.handle iter (Dmatrix.handle dtrain)))
 
+(* Custom-objective training step. Caller supplies per-row first and
+   second derivatives of their loss against the booster's current
+   predictions; [iter] mirrors update_one_iter's bookkeeping. The
+   modern XGBoosterTrainOneIter takes JSON __array_interface__ strings
+   describing the gradient/hessian buffers, which lets us pass the
+   Bigarrays without copying. We pin grad/hess across the call. *)
+let boost_one_iter t ~iter ~dtrain ~grad ~hess =
+  check_live t;
+  Dmatrix.check_live dtrain;
+  let n = Bigarray.Array1.dim grad in
+  if Bigarray.Array1.dim hess <> n then
+    raise
+      (Error.Xgboost_error
+         (Error.Invalid_argument
+            (Printf.sprintf
+               "boost_one_iter: grad length %d != hess length %d" n
+               (Bigarray.Array1.dim hess))));
+  let grad_json = Array_interface.dense_array1_float32 grad in
+  let hess_json = Array_interface.dense_array1_float32 hess in
+  t.iter_pin <- Some dtrain;
+  Fun.protect
+    ~finally:(fun () -> t.iter_pin <- None)
+    (fun () ->
+      Internal.xgb_check
+        (F.xgbooster_train_one_iter t.handle (Dmatrix.handle dtrain)
+           iter grad_json hess_json));
+  ignore (Sys.opaque_identity (grad, hess))
+
 let eval_one_iter t ~iter ~evals =
   check_live t;
   let n = List.length evals in
@@ -217,3 +245,84 @@ let free t =
 let with_ ?cache f =
   let t = create ?cache () in
   Fun.protect ~finally:(fun () -> free t) (fun () -> f t)
+
+(* Borrowed-pointer-to-string: copy the C string into a fresh OCaml
+   string (Ctypes [string_from_ptr] would also work but allocates a
+   copy under the hood — same effect). *)
+let read_borrowed_string p =
+  let rec len i =
+    if Char.code !@(p +@ i) = 0 then i else len (i + 1)
+  in
+  let n = len 0 in
+  let b = Bytes.create n in
+  for i = 0 to n - 1 do
+    Bytes.unsafe_set b i !@(p +@ i)
+  done;
+  Bytes.unsafe_to_string b
+
+let feature_score ?(importance_type = "weight") t =
+  check_live t;
+  let config =
+    Printf.sprintf {|{"importance_type":"%s"}|} importance_type
+  in
+  let out_n_features = allocate uint64_t Unsigned.UInt64.zero in
+  let out_features =
+    allocate (ptr (ptr char)) (from_voidp (ptr char) null)
+  in
+  let out_dim = allocate uint64_t Unsigned.UInt64.zero in
+  let out_shape =
+    allocate (ptr uint64_t) (from_voidp uint64_t null)
+  in
+  let out_scores = allocate (ptr float) (from_voidp float null) in
+  Internal.xgb_check
+    (F.xgbooster_feature_score t.handle config out_n_features
+       out_features out_dim out_shape out_scores);
+  let n_features = Internal.ulong_to_int !@out_n_features in
+  let dim = Internal.ulong_to_int !@out_dim in
+  let shape_ptr = !@out_shape in
+  let total =
+    let acc = ref 1 in
+    for i = 0 to dim - 1 do
+      acc := !acc * Internal.ulong_to_int !@(shape_ptr +@ i)
+    done;
+    !acc
+  in
+  let names_ptr = !@out_features in
+  let scores_ptr = !@out_scores in
+  let per_feature =
+    if n_features = 0 then 0 else total / n_features
+  in
+  let result = ref [] in
+  for i = n_features - 1 downto 0 do
+    let name = read_borrowed_string !@(names_ptr +@ i) in
+    let score = ref 0.0 in
+    for j = 0 to per_feature - 1 do
+      score := !score +. !@(scores_ptr +@ ((i * per_feature) + j))
+    done;
+    result := (name, !score) :: !result
+  done;
+  !result
+
+(* Expert-only no-copy predict. The returned Bigarray wraps libxgboost's
+   internal buffer directly; it is invalidated by the next call on the
+   same booster (not other boosters, not other DMatrices). The booster
+   is captured in the wrapping closure to keep it alive across the
+   wrap, but the buffer itself remains under XGBoost's control.
+   Use [predict] for the safe (eager-copy) variant. *)
+module Unsafe = struct
+  let predict_borrowed ?(ntree_limit = 0) ?(training = false) t dmat =
+    check_live t;
+    Dmatrix.check_live dmat;
+    let out_len = allocate uint64_t Unsigned.UInt64.zero in
+    let out_result = allocate (ptr float) (from_voidp float null) in
+    Internal.xgb_check
+      (F.xgbooster_predict t.handle (Dmatrix.handle dmat) 0
+         (Internal.uintv ntree_limit) (if training then 1 else 0)
+         out_len out_result);
+    let len = Internal.ulong_to_int !@out_len in
+    let src = !@out_result in
+    if len = 0 then
+      Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 0
+    else
+      bigarray_of_ptr array1 len Bigarray.Float32 src
+end

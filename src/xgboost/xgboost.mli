@@ -21,6 +21,12 @@ end
 
 exception Xgboost_error of Error.t
 
+(** Result-returning wrappers for callers who prefer [result] over
+    raised exceptions. The hot-path API raises by default. *)
+module Result : sig
+  val try_ : (unit -> 'a) -> ('a, Error.t) result
+end
+
 module DMatrix : sig
   (** Input matrices for libxgboost.
 
@@ -102,6 +108,7 @@ module DMatrix : sig
   val set_weight :
     t -> (float, Bigarray.float32_elt, _) Bigarray.Array1.t -> unit
 
+  (** Number of non-missing entries in the matrix. *)
   val num_non_missing : t -> int
 
   (** Explicitly free the underlying handle. Idempotent. *)
@@ -132,6 +139,19 @@ module Booster : sig
   (** Run one round of training. The training DMatrix is pinned only for
       the duration of this call. *)
   val update_one_iter : t -> iter:int -> dtrain:DMatrix.t -> unit
+
+  (** Custom-objective training: instead of letting libxgboost compute
+      gradients from the configured objective, the caller supplies the
+      first and second derivatives of their loss directly. [grad] and
+      [hess] must have the same length, normally [rows dtrain * n_classes].
+      The Bigarrays are pinned for the duration of the call only. *)
+  val boost_one_iter :
+    t ->
+    iter:int ->
+    dtrain:DMatrix.t ->
+    grad:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    hess:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    unit
 
   (** Evaluate the model against a list of (name, dmat) pairs and return
       the upstream-formatted evaluation string. *)
@@ -182,9 +202,29 @@ module Booster : sig
   val save_json_config : t -> string
   val load_json_config : t -> string -> unit
 
+  (** Per-feature importance scores. [importance_type] is one of
+      ["weight"] (default — split count), ["gain"], ["cover"],
+      ["total_gain"], ["total_cover"]. For multiclass models the score
+      returned per feature is the sum across classes. *)
+  val feature_score :
+    ?importance_type:string -> t -> (string * float) list
+
   val free : t -> unit
 
   val with_ : ?cache:DMatrix.t list -> (t -> 'a) -> 'a
+
+  (** Expert-only no-copy variants. The returned Bigarrays wrap
+      libxgboost's internal output buffer directly and are invalidated
+      by the next call on the same booster. Callers MUST consume (or
+      copy) the result before any subsequent call on this booster. *)
+  module Unsafe : sig
+    val predict_borrowed :
+      ?ntree_limit:int ->
+      ?training:bool ->
+      t ->
+      DMatrix.t ->
+      (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t
+  end
 end
 
 (** [version ()] returns the (major, minor, patch) of the loaded

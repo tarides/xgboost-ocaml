@@ -44,9 +44,13 @@ let labels_binary (m : (float, _, _) Bigarray.Array2.t) =
   let cols = Bigarray.Array2.dim2 m in
   let l = big1 rows in
   for r = 0 to rows - 1 do
+    (* Mirrors gen_labels_binary in bin/c_reference/bench_common.h
+       exactly — the 4th term is required for fixture parity. *)
     let v =
-      0.5 *. m.{r, 0} -. 0.3 *. m.{r, min 1 (cols - 1)}
+      0.5 *. m.{r, 0}
+      -. 0.3 *. m.{r, min 1 (cols - 1)}
       +. 0.2 *. m.{r, min 2 (cols - 1)}
+      +. 0.1 *. m.{r, 3 mod cols}
     in
     l.{r} <- (if v > 0.25 then 1.0 else 0.0)
   done;
@@ -159,6 +163,87 @@ let test_error_path () =
   let _ = F.xgb_get_last_error () in
   xgb_ok (F.xgbooster_free bst)
 
+(* Cross-layer parity oracle. The same training run is encoded in
+   bin/c_reference/check.c (pure C) and replicated here at layer B.
+   The first five predictions must agree with the captured fixture
+   in test/fixtures/check_predictions.txt to ~1e-5. Catches regressions
+   in either layer or in libxgboost itself across versions. *)
+let fixture_predictions =
+  [|
+    9.617016315e-01;
+    3.944031429e-03;
+    9.921880960e-01;
+    9.953472018e-01;
+    9.950394034e-01;
+  |]
+
+(* The fixture is captured from a multi-threaded hist training run
+   (OMP_NUM_THREADS = host default). Under ASan or under a different
+   OpenMP thread count, the FP reduction order in libxgboost's hist
+   builder shifts and the model predictions can drift by a few
+   percent. The fixture is meaningful only in the regime in which it
+   was captured; skip the test elsewhere rather than emit a false
+   regression. *)
+let in_unstable_fp_regime () =
+  match Sys.getenv_opt "LD_PRELOAD" with
+  | Some s when String.length s > 0 -> true
+  | _ -> false
+
+let test_fixture_parity () =
+  if in_unstable_fp_regime () then
+    Alcotest.skip ()
+  else
+  prng_state := 0xCAFE_BABEl;
+  let rows = 200 and cols = 16 and iters = 30 in
+  let m = big2 ~rows ~cols in
+  fill2 m;
+  let labels = labels_binary m in
+  let dmat_out = allocate F.dmatrix_handle null in
+  xgb_ok
+    (F.xgdmatrix_create_from_mat
+       (bigarray_start array2 m)
+       (ulong rows) (ulong cols) Float.nan dmat_out);
+  let dtrain = !@dmat_out in
+  xgb_ok
+    (F.xgdmatrix_set_float_info dtrain "label"
+       (bigarray_start array1 labels) (ulong rows));
+
+  let booster_out = allocate F.booster_handle null in
+  let dtrains = CArray.make F.dmatrix_handle 1 in
+  CArray.set dtrains 0 dtrain;
+  xgb_ok (F.xgbooster_create (CArray.start dtrains) (ulong 1) booster_out);
+  let bst = !@booster_out in
+  List.iter
+    (fun (k, v) -> xgb_ok (F.xgbooster_set_param bst k v))
+    [
+      "objective", "binary:logistic";
+      "tree_method", "hist";
+      "max_depth", "4";
+      "seed", "0";
+      "verbosity", "0";
+    ];
+  for it = 0 to iters - 1 do
+    xgb_ok (F.xgbooster_update_one_iter bst it dtrain)
+  done;
+
+  let out_len = allocate uint64_t Unsigned.UInt64.zero in
+  let out_result = allocate (ptr float) (from_voidp float null) in
+  xgb_ok
+    (F.xgbooster_predict bst dtrain 0 (uint 0) 0 out_len out_result);
+  let outp = !@out_result in
+  for i = 0 to Array.length fixture_predictions - 1 do
+    let got = !@(outp +@ i) in
+    let want = fixture_predictions.(i) in
+    let diff = Float.abs (got -. want) in
+    Alcotest.(check (float 1e-5))
+      (Printf.sprintf "fixture[%d] (got %.9e want %.9e diff %.2e)" i
+         got want diff)
+      want got
+  done;
+
+  xgb_ok (F.xgbooster_free bst);
+  xgb_ok (F.xgdmatrix_free dtrain)
+
 let test_save_load_buffer () =
   prng_state := 0xBEEFl;
   let rows = 100 and cols = 8 and iters = 5 in
@@ -220,6 +305,7 @@ let () =
           Alcotest.test_case "version" `Quick test_version;
           Alcotest.test_case "dmatrix_lifecycle" `Quick test_dmatrix_lifecycle;
           Alcotest.test_case "train_and_predict" `Quick test_train_and_predict;
+          Alcotest.test_case "fixture_parity" `Quick test_fixture_parity;
           Alcotest.test_case "error_path" `Quick test_error_path;
           Alcotest.test_case "save_load_buffer" `Quick test_save_load_buffer;
         ] );

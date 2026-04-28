@@ -115,6 +115,14 @@ module Functions (F : Ctypes.FOREIGN) = struct
     foreign "XGBoosterUpdateOneIter"
       (booster_handle @-> int @-> dmatrix_handle @-> returning int)
 
+  (* Modern (>=2.0) custom-objective training: grad and hess as JSON
+     __array_interface__ strings instead of raw float* (the deprecated
+     XGBoosterBoostOneIter took those directly). *)
+  let xgbooster_train_one_iter =
+    foreign "XGBoosterTrainOneIter"
+      (booster_handle @-> dmatrix_handle @-> int @-> string @-> string
+      @-> returning int)
+
   let xgbooster_eval_one_iter =
     foreign "XGBoosterEvalOneIter"
       (booster_handle @-> int
@@ -163,4 +171,20 @@ module Functions (F : Ctypes.FOREIGN) = struct
   let xgbooster_load_json_config =
     foreign "XGBoosterLoadJsonConfig"
       (booster_handle @-> string @-> returning int)
+
+  (* Per-feature importance scores. [config] is a JSON string with at
+     least {"importance_type": "weight"|"gain"|"cover"|...}. The output
+     is two borrowed arrays: [features] (n_features strings) and
+     [scores] (a tensor of shape [out_shape] whose product equals the
+     score length). For non-multiclass models out_dim=1 and the shape
+     is just [n_features]. *)
+  let xgbooster_feature_score =
+    foreign "XGBoosterFeatureScore"
+      (booster_handle @-> string
+      @-> ptr bst_ulong                  (* out_n_features *)
+      @-> ptr (ptr (ptr char))           (* out_features *)
+      @-> ptr bst_ulong                  (* out_dim *)
+      @-> ptr (ptr bst_ulong)            (* out_shape *)
+      @-> ptr (ptr float)                (* out_scores *)
+      @-> returning int)
 end

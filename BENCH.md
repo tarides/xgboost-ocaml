@@ -41,19 +41,35 @@ streaming use would already have batches in their own Bigarrays).
 
 ## Phase 4 (post-W3 memcpy fix) — current
 
-git: post-`8fcdd09` Phase-4 patch. `--repeat 5 --warmup 2` (W1, W3),
-`--repeat 3 --warmup 1` (W2, W4).
+`--repeat 3-5 --warmup 1-2`, `OMP_NUM_THREADS=4`, all min-of-N ms.
+Python peer = `xgboost==3.0.0` from PyPI in `bench/python/.venv/`.
 
-| Workload | C ref | Layer B | Layer C | Layer-C/C ref |
-|----------|------:|--------:|--------:|--------------:|
-| W1 train 1k×50, 100 iters reg:squarederror   | 134.0 ms | 134.3 ms | 139.6 ms | +4% |
-| W2 train 100k×50, 30 iters binary:logistic   | 417.1 ms | 397.7 ms | 448.2 ms | +7% |
-| W3 batch predict 100k                         |  11.5 ms |  12.6 ms |  11.9 ms | +4% |
-| W4 online predict 10k single-row in loop      | 346.1 ms | 356.6 ms | 392.2 ms | +13% |
+| Workload                                       | C ref | Layer B | Layer C | Python | LayerC/Cref | LayerC/Py |
+|------------------------------------------------|------:|--------:|--------:|-------:|------------:|----------:|
+| W1 train 1k×50, 100 iters reg:squarederror     | 134.0 |  134.3  |  139.6  |  131.8 |   +4%       |  +6%      |
+| W2 train 100k×50, 30 iters binary:logistic     | 417.1 |  397.7  |  448.2  |  424.1 |  +7%        |  +6%      |
+| W3 batch predict 100k                          |  11.5 |   12.6  |   11.9  |   16.6 |  +4%        | -28% (we win) |
+| W4 online predict 10k single-row in loop       | 346.1 |  356.6  |  392.2  | 2774.4 | +13%        | -86% (we win 7×) |
+| W5 DMatrix-from-dense 100k×100                 |  67.9 |   65.5  |   ~67   |   43.7 |  ≈0%        | +53% (Py wins) |
+| W6 DMatrix-from-CSR 100k×100, 5% density       |   6.0 |    6.7  |   ~7    |    3.2 |  ≈+15%      | +118% (Py wins) |
 
 **Phase-2 perf gates: all met.**
 - Heavy training (W1, W2) target: <10%. Achieved +4% / +7%.
 - Prediction (W3, W4) target: <30%. Achieved +4% / +13%.
+
+**Versus the Python peer:**
+- We match Python on heavy training (libxgboost itself is the
+  bottleneck; both wrappers add ~6% overhead).
+- We beat Python by a meaningful margin on prediction-heavy paths
+  (W3 by 28%, W4 — online single-row predict — by ~7×). Python's
+  per-iteration interpreter cost dominates W4.
+- Python beats us on raw DMatrix construction (W5 +53%, W6 +118%) —
+  numpy's array_interface lets libxgboost ingest the data with one
+  memcpy, whereas our `XGDMatrixCreateFromMat` and the deprecated
+  `XGDMatrixCreateFromCSREx` paths take a slower internal route. The
+  fix is to switch `DMatrix.of_bigarray2` and `DMatrix.of_csr` to the
+  modern `__array_interface__`-based constructors (deferred from
+  Phase 3).
 
 ## Phase 4 — gap-filling decomposition
 

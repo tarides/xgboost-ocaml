@@ -35,11 +35,14 @@ let labels_binary (m : (float, _, _) Array2.t) =
   let cols = Array2.dim2 m in
   let l = big1 rows in
   for r = 0 to rows - 1 do
+    (* Mirrors gen_labels_binary in bin/c_reference/bench_common.h
+       exactly: 4 terms, the 4th column index wraps via [3 mod cols]
+       so the labels match the C reference for any cols >= 1. *)
     let v =
       0.5 *. m.{r, 0}
       -. 0.3 *. m.{r, min 1 (cols - 1)}
       +. 0.2 *. m.{r, min 2 (cols - 1)}
-      +. 0.1 *. m.{r, min 3 (cols - 1)}
+      +. 0.1 *. m.{r, 3 mod cols}
     in
     l.{r} <- (if v > 0.25 then 1.0 else 0.0)
   done;
@@ -265,6 +268,169 @@ let test_predict_dense_agrees_with_predict () =
   Alcotest.(check (float 1e-5))
     "predict_dense agrees with predict via DMatrix" 0.0 !max_diff
 
+let test_feature_score () =
+  let _, _, _, bst = train_simple ~seed:0xF5C0_5El () in
+  let scores = Xgboost.Booster.feature_score bst in
+  Alcotest.(check bool) "feature_score returns at least one entry"
+    true (List.length scores > 0);
+  List.iter
+    (fun (_, v) ->
+      Alcotest.(check bool) "score finite" true (Float.is_finite v);
+      Alcotest.(check bool) "score >= 0" true (v >= 0.0))
+    scores
+
+let test_boost_one_iter_custom_obj () =
+  (* Drive a custom-objective training loop: at each iteration, predict,
+     compute grad = pred - label and hess = 1 (squared-error
+     derivatives), and call boost_one_iter. The built-in reg:squarederror
+     uses additional regularisation/initialisation that we don't try to
+     replicate exactly; we just verify (a) the call sequence completes
+     without error, (b) predictions are finite and in a reasonable
+     range, (c) MSE strictly decreases over iterations. *)
+  prng_state := 0xCB05_71El;
+  let rows = 200 and cols = 8 and iters = 15 in
+  let m = big2 ~rows ~cols in
+  fill2 m;
+  let labels = big1 rows in
+  for r = 0 to rows - 1 do
+    labels.{r} <-
+      0.5 *. m.{r, 0} -. 0.3 *. m.{r, 1} +. 0.2 *. m.{r, 2}
+  done;
+  let dtrain = Xgboost.DMatrix.of_bigarray2 m in
+  Xgboost.DMatrix.set_label dtrain labels;
+  let bst = Xgboost.Booster.create ~cache:[ dtrain ] () in
+  Xgboost.Booster.set_params bst
+    [
+      "objective", "reg:squarederror";
+      "tree_method", "hist";
+      "max_depth", "4";
+      "eta", "0.1";
+      "verbosity", "0";
+    ];
+
+  let mse preds =
+    let s = ref 0.0 in
+    for r = 0 to rows - 1 do
+      let d = preds.{r} -. labels.{r} in
+      s := !s +. (d *. d)
+    done;
+    !s /. float_of_int rows
+  in
+
+  let grad = big1 rows in
+  let hess = big1 rows in
+  let mse0 = ref Float.infinity in
+  let mse_last = ref Float.infinity in
+  for it = 0 to iters - 1 do
+    let preds = Xgboost.Booster.predict bst dtrain in
+    if it = 0 then mse0 := mse preds;
+    for r = 0 to rows - 1 do
+      grad.{r} <- preds.{r} -. labels.{r};
+      hess.{r} <- 1.0
+    done;
+    Xgboost.Booster.boost_one_iter bst ~iter:it ~dtrain ~grad ~hess
+  done;
+  let final_preds = Xgboost.Booster.predict bst dtrain in
+  mse_last := mse final_preds;
+  for r = 0 to rows - 1 do
+    Alcotest.(check bool)
+      (Printf.sprintf "pred[%d] finite" r) true
+      (Float.is_finite final_preds.{r})
+  done;
+  Alcotest.(check bool)
+    (Printf.sprintf "MSE decreased from %.4f to %.4f" !mse0 !mse_last)
+    true (!mse_last < !mse0)
+
+let test_unsafe_predict_borrowed () =
+  let _, _, dtrain, bst = train_simple ~seed:0x800B_2A0Bl () in
+  let p_safe = Xgboost.Booster.predict bst dtrain in
+  let p_borrowed = Xgboost.Booster.Unsafe.predict_borrowed bst dtrain in
+  (* Same booster, same DMatrix → same predictions. Read p_borrowed
+     before any further call on bst. *)
+  Alcotest.(check int) "same length"
+    (Bigarray.Array1.dim p_safe) (Bigarray.Array1.dim p_borrowed);
+  let max_diff = ref 0.0 in
+  for i = 0 to Bigarray.Array1.dim p_safe - 1 do
+    let d = Float.abs (p_safe.{i} -. p_borrowed.{i}) in
+    if d > !max_diff then max_diff := d
+  done;
+  Alcotest.(check (float 0.0))
+    "borrowed equals copied predict" 0.0 !max_diff
+
+let test_result_try_ () =
+  (* Ok path *)
+  let m = big2 ~rows:10 ~cols:4 in
+  fill2 m;
+  let r =
+    Xgboost.Result.try_ (fun () -> Xgboost.DMatrix.of_bigarray2 m)
+  in
+  (match r with
+   | Ok d ->
+       Alcotest.(check int) "ok rows" 10 (Xgboost.DMatrix.rows d);
+       Xgboost.DMatrix.free d
+   | Error _ -> Alcotest.fail "expected Ok");
+  (* Error path: invalid label shape *)
+  let dt = Xgboost.DMatrix.of_bigarray2 m in
+  let r2 =
+    Xgboost.Result.try_ (fun () ->
+        let bad = big1 5 in
+        Xgboost.DMatrix.set_label dt bad)
+  in
+  (match r2 with
+   | Ok () -> Alcotest.fail "expected Error"
+   | Error (Xgboost.Error.Shape_mismatch _) -> ()
+   | Error _ -> Alcotest.fail "wrong error variant");
+  Xgboost.DMatrix.free dt
+
+let fixture_predictions =
+  [|
+    9.617016315e-01;
+    3.944031429e-03;
+    9.921880960e-01;
+    9.953472018e-01;
+    9.950394034e-01;
+  |]
+
+(* Cross-layer parity oracle: same setup as bin/c_reference/check.c
+   and test/bindings/check.ml::test_fixture_parity. The high-level
+   API must reproduce the captured fixture predictions to ~1e-5.
+   See test/bindings/check.ml for why we skip under ASan. *)
+let in_unstable_fp_regime () =
+  match Sys.getenv_opt "LD_PRELOAD" with
+  | Some s when String.length s > 0 -> true
+  | _ -> false
+
+let test_fixture_parity_layer_c () =
+  if in_unstable_fp_regime () then Alcotest.skip ()
+  else
+  prng_state := 0xCAFE_BABEl;
+  let rows = 200 and cols = 16 and iters = 30 in
+  let m = big2 ~rows ~cols in
+  fill2 m;
+  let labels = labels_binary m in
+  let dtrain = Xgboost.DMatrix.of_bigarray2 m in
+  Xgboost.DMatrix.set_label dtrain labels;
+  let bst = Xgboost.Booster.create ~cache:[ dtrain ] () in
+  Xgboost.Booster.set_params bst
+    [
+      "objective", "binary:logistic";
+      "tree_method", "hist";
+      "max_depth", "4";
+      "seed", "0";
+      "verbosity", "0";
+    ];
+  for it = 0 to iters - 1 do
+    Xgboost.Booster.update_one_iter bst ~iter:it ~dtrain
+  done;
+  let preds = Xgboost.Booster.predict bst dtrain in
+  for i = 0 to Array.length fixture_predictions - 1 do
+    let got = preds.{i} in
+    let want = fixture_predictions.(i) in
+    Alcotest.(check (float 1e-5))
+      (Printf.sprintf "fixture[%d] (got %.9e want %.9e)" i got want)
+      want got
+  done
+
 let test_double_free_safe () =
   let m = big2 ~rows:5 ~cols:3 in
   let d = Xgboost.DMatrix.of_bigarray2 m in
@@ -292,6 +458,14 @@ let () =
           Alcotest.test_case "streaming_iterator" `Quick test_streaming_iterator;
           Alcotest.test_case "predict_dense_agrees" `Quick
             test_predict_dense_agrees_with_predict;
+          Alcotest.test_case "feature_score" `Quick test_feature_score;
+          Alcotest.test_case "boost_one_iter_custom_obj" `Quick
+            test_boost_one_iter_custom_obj;
+          Alcotest.test_case "unsafe_predict_borrowed" `Quick
+            test_unsafe_predict_borrowed;
+          Alcotest.test_case "result_try_" `Quick test_result_try_;
+          Alcotest.test_case "fixture_parity_layer_c" `Quick
+            test_fixture_parity_layer_c;
           Alcotest.test_case "double_free_safe" `Quick
             test_double_free_safe;
         ] );
