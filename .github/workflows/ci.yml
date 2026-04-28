@@ -29,19 +29,18 @@ jobs:
           sudo apt-get install -y pkg-config python3-pip patchelf libgomp1
           python3 -m pip install --user --break-system-packages xgboost==3.0.0
           XGBOOST_PY=$(python3 -c 'import os, xgboost; print(os.path.dirname(xgboost.__file__))')
-          # The wheel ships a self-contained lib/ directory: a
-          # libxgboost.so plus a vendored, hash-name-mangled libgomp.
-          # Drop both into a dedicated dir and configure ldconfig to
-          # search there, rather than mixing them with system libs.
-          sudo mkdir -p /usr/local/lib/xgboost-wheel
-          sudo cp -a "$XGBOOST_PY/lib/." /usr/local/lib/xgboost-wheel/
-          # Symlink libxgboost.so into a standard ldconfig path with a
-          # canonical name; -lxgboost still finds it.
-          sudo ln -sf /usr/local/lib/xgboost-wheel/libxgboost.so \
-                      /usr/lib/x86_64-linux-gnu/libxgboost.so
-          # Tell ldconfig about the wheel's lib dir so the bundled
-          # libgomp (mangled name) is discovered at runtime.
-          echo /usr/local/lib/xgboost-wheel | sudo tee /etc/ld.so.conf.d/xgboost-wheel.conf > /dev/null
+          sudo install -m 0644 "$XGBOOST_PY/lib/libxgboost.so" /usr/lib/x86_64-linux-gnu/
+          # The wheel was built with auditwheel: libxgboost.so DT_NEEDEDs
+          # a hash-name-mangled libgomp-HASH.so.1.0.0 bundled alongside
+          # it. Re-point the dependency at the system libgomp so we
+          # don't need to ship the mangled file (and don't need a
+          # custom ldconfig entry). Discover the mangled name first
+          # since the hash is build-specific.
+          MANGLED_GOMP=$(patchelf --print-needed /usr/lib/x86_64-linux-gnu/libxgboost.so | grep -E '^libgomp-' || true)
+          if [ -n "$MANGLED_GOMP" ]; then
+            sudo patchelf --replace-needed "$MANGLED_GOMP" libgomp.so.1 \
+              /usr/lib/x86_64-linux-gnu/libxgboost.so
+          fi
           # Headers from the matching upstream tag
           git clone --depth 1 --branch v3.0.0 https://github.com/dmlc/xgboost.git /tmp/xgboost-src
           sudo cp -r /tmp/xgboost-src/include/xgboost /usr/include/
