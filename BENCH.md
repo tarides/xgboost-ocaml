@@ -39,6 +39,42 @@ W7 streaming overhead is ~6 ms per batch on the dev box, dominated by
 the per-batch slice-copy in the bench harness (synthetic; real
 streaming use would already have batches in their own Bigarrays).
 
+## Phase 5 (of_csr modernisation) — current
+
+`Xgboost.DMatrix.of_csr` switched from the legacy
+`XGDMatrixCreateFromCSREx` (which requires per-element copy of int32
+indptr/indices into `size_t` / `unsigned` C arrays on the OCaml side)
+to the modern `XGDMatrixCreateFromCSR` (which takes JSON
+`__array_interface__` strings encoding the Bigarray buffers
+directly — zero copy).
+
+Standalone probe of the OCaml-side copy loop alone, on the W6 size
+(100001 indptr entries + 500000 indices):
+
+| Path                         | Time |
+|------------------------------|------:|
+| element copy (legacy CSREx)  | 11.8 ms |
+| JSON __array_interface__     | <0.1 ms |
+
+W6 (DMatrix from CSR, 100k×100, 5% density), all four layers, before
+and after the fix:
+
+| Layer       | Before | After | Change |
+|-------------|------:|------:|-------:|
+| C ref (uses CSREx)         |  6.2 ms |  6.2 ms | unchanged |
+| OCaml raw bindings (CSREx) |  6.8 ms |  5.7 ms | within noise |
+| OCaml API (was CSREx, now modern) | 25.8 ms | **4.7 ms** | **−81% (5.5×)** |
+| Python (uses modern path)  |  3.4 ms |  3.5 ms | unchanged |
+
+Post-fix the OCaml API beats the C reference on W6 because the C
+reference is using the older API path. A user writing fresh C against
+`c_api.h` today would also use `XGDMatrixCreateFromCSR` and would
+land in the same neighbourhood (≈4.7 ms).
+
+The same modernisation applied to `DMatrix.of_bigarray2` (currently
+using `XGDMatrixCreateFromMat`) would close the W5 gap against
+Python (W5 OCaml: 76 ms; Python: 56 ms). Deferred.
+
 ## Phase 4 (post-W3 memcpy fix) — current
 
 `--repeat 3-5 --warmup 1-2`, `OMP_NUM_THREADS=4`, all min-of-N ms.

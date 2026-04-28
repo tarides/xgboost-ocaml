@@ -50,10 +50,12 @@ module DMatrix : sig
     (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array2.t ->
     t
 
-  (** [of_csr ~indptr ~indices ~data ~n_cols] constructs a sparse DMatrix
-      in CSR form. [indptr.(i)] is the start of row [i] in [indices] /
-      [data]; [Array1.dim indptr - 1] is the number of rows.
-      All three Bigarrays are pinned for the lifetime of the result. *)
+  (** [of_csr ~indptr ~indices ~data ~n_cols] constructs a sparse
+      DMatrix in CSR form. [indptr.(i)] is the start of row [i] in
+      [indices] / [data]; [Array1.dim indptr - 1] is the number of
+      rows. All three Bigarrays are pinned for the lifetime of the
+      result. The buffers are passed to libxgboost via JSON
+      __array_interface__ — no element-wise copy. *)
   val of_csr :
     indptr:(int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
     indices:(int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t ->

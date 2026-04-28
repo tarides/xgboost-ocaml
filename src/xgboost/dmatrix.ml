@@ -69,6 +69,7 @@ let of_bigarray2 ?(missing = Float.nan) m =
   make ~handle:!@h_out ~rows ~cols ~pin:[ Obj.repr m ]
 
 let of_csr ~indptr ~indices ~data ~n_cols =
+  let missing = Float.nan in
   let n_rows = Bigarray.Array1.dim indptr - 1 in
   let nnz = Bigarray.Array1.dim data in
   if Bigarray.Array1.dim indices <> nnz then
@@ -84,29 +85,21 @@ let of_csr ~indptr ~indices ~data ~n_cols =
          (Error.Invalid_argument
             "of_csr: indptr must have length n_rows+1 (>=1)"));
 
-  (* The deprecated CSREx call expects [size_t* indptr], [unsigned* indices],
-   * [float* data]. We must convert int32 Bigarrays to those C types via
-   * intermediate CArrays. The Phase-3 path will use the modern JSON
-   * __array_interface__ API and skip this copy. *)
-  let indptr_carr = CArray.make size_t (n_rows + 1) in
-  for i = 0 to n_rows do
-    CArray.set indptr_carr i (Internal.usize (Int32.to_int indptr.{i}))
-  done;
-  let indices_carr = CArray.make uint nnz in
-  for i = 0 to nnz - 1 do
-    CArray.set indices_carr i (Internal.uintv (Int32.to_int indices.{i}))
-  done;
-  (* For data we can pass the Bigarray pointer directly. *)
+  (* Modern API path: pass the Bigarray buffers via JSON
+     __array_interface__ strings, no per-element copy. The buffers are
+     pinned in the resulting DMatrix.t. *)
+  let json_indptr = Array_interface.dense_array1_int32 indptr in
+  let json_indices = Array_interface.dense_array1_int32 indices in
+  let json_data = Array_interface.dense_array1_float32 data in
+  let missing_str =
+    if Float.is_nan missing then "NaN" else string_of_float missing
+  in
+  let config = Printf.sprintf {|{"missing":%s}|} missing_str in
   let h_out = Internal.alloc_dmatrix_handle () in
   Internal.xgb_check
-    (F.xgdmatrix_create_from_csr_ex
-       (CArray.start indptr_carr)
-       (CArray.start indices_carr)
-       (bigarray_start array1 data)
-       (Internal.usize (n_rows + 1))
-       (Internal.usize nnz)
-       (Internal.usize n_cols)
-       h_out);
+    (F.xgdmatrix_create_from_csr
+       json_indptr json_indices json_data
+       (Internal.ulong n_cols) config h_out);
   make ~handle:!@h_out ~rows:n_rows ~cols:n_cols
     ~pin:[ Obj.repr indptr; Obj.repr indices; Obj.repr data ]
 
