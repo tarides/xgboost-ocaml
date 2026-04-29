@@ -380,6 +380,21 @@ alcotest test plus a qcheck property, extend the bench harness if
 it's on a hot path. The plan-vs-reality audit lives in
 [BENCH.md](BENCH.md) and is updated per phase.
 
+## AI disclosure
+
+Most of this binding — code, tests, benchmarks, and documentation —
+was drafted by Claude (Anthropic's Opus 4.7 model, 1M-context build)
+under direct human direction. The
+`Co-Authored-By: Claude Opus 4.7 (1M context)` trailer on each commit
+message marks the AI involvement.
+
+Every design decision was reviewed by the human maintainer before
+landing, and the test suite (alcotest + qcheck properties +
+cross-layer fixture parity + ASan) is the authoritative correctness
+signal. Reviewers should still be skeptical of subtle FFI lifetime
+or pointer-aliasing issues that LLMs can plausibly write past — bug
+reports flagging anything that looks off are especially welcome.
+
 ## License
 
 MIT. See [LICENSE](LICENSE). libxgboost itself is Apache-2.0 and is
