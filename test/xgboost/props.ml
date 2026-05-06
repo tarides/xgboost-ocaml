@@ -90,13 +90,23 @@ let csr_of_dense ?(threshold = 0.0) (m : (float, _, _) Array2.t) =
 
 let arb_size = QCheck.pair (QCheck.int_range 32 80) (QCheck.int_range 4 16)
 
+(* Each training-heavy property explicitly frees its booster + dtrain
+   at end. Relying on GC alone caused intermittent OOMs in CI: each
+   trained booster pins ~MB of C-side memory (DMatrix copy + tree
+   nodes + hist caches), but the OCaml-side handle is tiny — so OCaml's
+   GC heuristic underestimates the true memory pressure and only runs
+   sporadically across the 100-200 qcheck iterations. *)
+
 let prop_predict_shape =
   QCheck.Test.make ~name:"predict shape == rows" ~count:200 arb_size
     (fun (rows, cols) ->
       let st = Random.State.make [| rows; cols; 42 |] in
       let _, dtrain, bst = train_small ~rng:st ~rows ~cols ~iters:5 in
       let p = Xgboost.Booster.predict bst dtrain in
-      Array1.dim p = rows)
+      let ok = Array1.dim p = rows in
+      Xgboost.Booster.free bst;
+      Xgboost.DMatrix.free dtrain;
+      ok)
 
 let max_abs_diff a b =
   let n = Array1.dim a in
@@ -122,19 +132,24 @@ let prop_model_buffer_rt =
       let _, dtrain, bst = train_small ~rng:st ~rows ~cols ~iters:5 in
       let preds_before = Xgboost.Booster.predict bst dtrain in
       let buf = Xgboost.Booster.save_model_buffer bst in
-      try
-        Xgboost.Booster.with_ (fun bst2 ->
-            Xgboost.Booster.load_model_buffer bst2 buf;
-            let preds_after = Xgboost.Booster.predict bst2 dtrain in
-            let diff = max_abs_diff preds_before preds_after in
-            diff < 1e-5)
-      with Xgboost.Xgboost_error (Xgboost.Error.Xgb_error _) ->
-        (* Upstream libxgboost has intermittent JSON-roundtrip bugs for
-           certain small-data models (observed: "map::at" and "Invalid
-           cast, from Null to Object"). Discard those qcheck cases —
-           the buffer round-trip code in our binding is unchanged
-           regardless of which case fires. *)
-        QCheck.assume false; false)
+      let result =
+        try
+          Xgboost.Booster.with_ (fun bst2 ->
+              Xgboost.Booster.load_model_buffer bst2 buf;
+              let preds_after = Xgboost.Booster.predict bst2 dtrain in
+              let diff = max_abs_diff preds_before preds_after in
+              diff < 1e-5)
+        with Xgboost.Xgboost_error (Xgboost.Error.Xgb_error _) ->
+          (* Upstream libxgboost has intermittent JSON-roundtrip bugs for
+             certain small-data models (observed: "map::at" and "Invalid
+             cast, from Null to Object"). Discard those qcheck cases —
+             the buffer round-trip code in our binding is unchanged
+             regardless of which case fires. *)
+          QCheck.assume false; false
+      in
+      Xgboost.Booster.free bst;
+      Xgboost.DMatrix.free dtrain;
+      result)
 
 (* JSON config semantic round-trip: after [load] the predictions must
    still match. We can't compare config strings byte-for-byte because
@@ -152,7 +167,10 @@ let prop_json_config_rt =
       let cfg = Xgboost.Booster.save_json_config bst in
       Xgboost.Booster.load_json_config bst cfg;
       let preds_after = Xgboost.Booster.predict bst dtrain in
-      max_abs_diff preds_before preds_after < 1e-6)
+      let ok = max_abs_diff preds_before preds_after < 1e-6 in
+      Xgboost.Booster.free bst;
+      Xgboost.DMatrix.free dtrain;
+      ok)
 
 (* Predict purity: calling predict twice on the same booster + same
    input must return bit-identical results. Predict is supposed to
@@ -172,7 +190,10 @@ let prop_predict_pure =
       let _, dtrain, bst = train_small ~rng:st ~rows ~cols ~iters:5 in
       let p1 = Xgboost.Booster.predict bst dtrain in
       let p2 = Xgboost.Booster.predict bst dtrain in
-      max_abs_diff p1 p2 = 0.0)
+      let ok = max_abs_diff p1 p2 = 0.0 in
+      Xgboost.Booster.free bst;
+      Xgboost.DMatrix.free dtrain;
+      ok)
 
 (* Slice consistency: predict_dense on the first k rows of [m]
    approximately equals the first k entries of predict_dense on the
@@ -183,7 +204,7 @@ let prop_slice_consistency =
   QCheck.Test.make ~name:"predict_dense on slice ≈ prefix" ~count:100
     arb_size (fun (rows, cols) ->
       let st = Random.State.make [| rows; cols; 0x51; 0x1C |] in
-      let _, _, bst = train_small ~rng:st ~rows ~cols ~iters:5 in
+      let _, dtrain, bst = train_small ~rng:st ~rows ~cols ~iters:5 in
       let test_m = big2 ~rows ~cols in
       fill_rand st test_m;
       let p_full = Xgboost.Booster.predict_dense bst test_m in
@@ -195,7 +216,10 @@ let prop_slice_consistency =
         let d = Float.abs (p_full.{i} -. p_slice.{i}) in
         if d > !max_diff then max_diff := d
       done;
-      !max_diff < 1e-4)
+      let ok = !max_diff < 1e-4 in
+      Xgboost.Booster.free bst;
+      Xgboost.DMatrix.free dtrain;
+      ok)
 
 (* Sparse/dense equivalence: a DMatrix built from a CSR view of the
    same data should produce predictions within 1e-5 of the dense
@@ -216,9 +240,12 @@ let prop_sparse_dense_eq =
       let p_sparse = Xgboost.Booster.predict bst dt_csr in
       Xgboost.DMatrix.free dt_dense2;
       Xgboost.DMatrix.free dt_csr;
-      ignore (Sys.opaque_identity (dtrain_dense, test_m));
+      ignore (Sys.opaque_identity test_m);
       let diff = max_abs_diff p_dense p_sparse in
-      diff < 1e-5)
+      let ok = diff < 1e-5 in
+      Xgboost.Booster.free bst;
+      Xgboost.DMatrix.free dtrain_dense;
+      ok)
 
 let prop_dmatrix_lifetime =
   QCheck.Test.make ~name:"DMatrix lifetime: 200 alloc/free leaves heap clean"
