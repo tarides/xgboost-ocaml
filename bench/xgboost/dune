@@ -3,3 +3,9 @@
  (package xgboost-bench)
  (public_name xgboost-bench-perf)
  (libraries xgboost mtime mtime.clock.os unix))
+
+(executable
+ (name perf_scale)
+ (package xgboost-bench)
+ (public_name xgboost-bench-perf-scale)
+ (libraries xgboost mtime mtime.clock.os unix))
