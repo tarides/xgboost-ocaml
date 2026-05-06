@@ -105,6 +105,15 @@ module Functions (F : Ctypes.FOREIGN) = struct
   let xgdmatrix_free =
     foreign "XGDMatrixFree" (dmatrix_handle @-> returning int)
 
+  (* Build a child DMatrix containing a row subset of [parent], identified
+     by [idxset] (an array of [len] int32 row indices into the parent).
+     The child is a fresh DMatrix; libxgboost copies the relevant rows on
+     construction. Used by k-fold cross validation. *)
+  let xgdmatrix_slice_dmatrix =
+    foreign "XGDMatrixSliceDMatrix"
+      (dmatrix_handle @-> ptr int @-> bst_ulong
+      @-> ptr dmatrix_handle @-> returning int)
+
   (* ----- Booster ----- *)
 
   let xgbooster_create =

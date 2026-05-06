@@ -22,9 +22,9 @@ project fills that gap.
   sparse input, streaming construction for larger-than-RAM datasets,
   custom-objective training, JSON config and model persistence, in-
   place prediction.
-- **Comprehensively tested** — 30 alcotest + qcheck cases including a
-  cross-layer fixture-parity oracle, plus a clean run under
-  AddressSanitizer.
+- **Comprehensively tested** — alcotest + qcheck suite covering the
+  hot path (~50 cases) including a cross-layer fixture-parity
+  oracle, plus a clean run under AddressSanitizer.
 - **Benchmarked against C reference and Python xgboost** on a fixed
   grid; see [BENCH.md](BENCH.md) and the table below.
 
@@ -55,6 +55,39 @@ Printf.printf "first prediction: %f\n" preds.{0};
 
 let buf = Xgboost.Booster.save_model_buffer bst in
 (* ... persist [buf] anywhere; load_model_buffer round-trips bit-by-bit ... *)
+```
+
+`Xgboost.Eval` parses the `[<iter>]\ttrain-auc:0.99\t...` strings
+returned by `Booster.eval_one_iter`, and computes AUC / ROC directly
+from prediction and label Bigarrays:
+
+```ocaml
+let s = Xgboost.Booster.eval_one_iter bst ~iter:0
+          ~evals:[ "test", dtrain ] in
+let auc_str = Xgboost.Eval.get ~metric:"test-auc" s in
+
+(* Or compute AUC directly, no booster needed. *)
+let preds  = Xgboost.Booster.predict bst dtest in
+let auc    = Xgboost.Eval.auc ~predictions:preds ~labels in
+let curve  = Xgboost.Eval.roc ~predictions:preds ~labels in
+```
+
+`Xgboost.Cv.k_fold` runs k-fold cross validation. Pass
+`?group_ids` to keep rows that share a group in the same fold
+(cluster-coherent splitting):
+
+```ocaml
+let create_booster ~dtrain =
+  let bst = Xgboost.Booster.create ~cache:[ dtrain ] () in
+  Xgboost.Booster.set_params bst params;
+  bst
+in
+let results =
+  Xgboost.Cv.k_fold ~k:5 ~create_booster
+    ~features:dtrain ~labels ~iters_per_fold:30 ()
+in
+let mean, std = Xgboost.Cv.summarise results ~metric:`Test_auc in
+Printf.printf "5-fold test AUC: %.3f ± %.3f\n" mean std
 ```
 
 `Xgboost.DMatrix.t` and `Xgboost.Booster.t` are GC-managed: they free
@@ -216,6 +249,9 @@ val of_iterator :
 val set_label  : t -> (...) Bigarray.Array1.t -> unit
 val set_weight : t -> (...) Bigarray.Array1.t -> unit
 
+(* Subset rows by an int32 index array — wraps XGDMatrixSliceDMatrix. *)
+val slice : t -> (int32, _, _) Bigarray.Array1.t -> t
+
 val free  : t -> unit               (* explicit, idempotent *)
 val with_ : (unit -> t) -> (t -> 'a) -> 'a
 ```
@@ -274,6 +310,55 @@ module Unsafe : sig
     ?ntree_limit:int -> ?training:bool ->
     t -> DMatrix.t -> (...) Bigarray.Array1.t
 end
+```
+
+`Xgboost.Eval`:
+
+```ocaml
+val parse : string -> (string * float) list
+val get   : metric:string -> string -> float
+
+val auc :
+  predictions:(...) Bigarray.Array1.t ->
+  labels:(...) Bigarray.Array1.t -> float
+
+val roc :
+  predictions:(...) Bigarray.Array1.t ->
+  labels:(...) Bigarray.Array1.t -> (float * float) list
+```
+
+`Xgboost.Cv`:
+
+```ocaml
+type fold_result = {
+  fold       : int;
+  train_auc  : float;
+  test_auc   : float;
+  booster    : Booster.t;
+}
+
+val k_fold :
+  k:int ->
+  create_booster:(dtrain:DMatrix.t -> Booster.t) ->
+  features:DMatrix.t ->
+  labels:(...) Bigarray.Array1.t ->
+  ?group_ids:(int, Bigarray.int_elt, _) Bigarray.Array1.t ->
+  ?seed:int ->
+  iters_per_fold:int ->
+  unit -> fold_result list
+
+val k_fold_array2 :       (* same, but takes Array2 features *)
+  k:int -> ... -> features:(...) Bigarray.Array2.t -> ... ->
+  fold_result list
+
+val summarise :
+  fold_result list ->
+  metric:[ `Train_auc | `Test_auc ] -> float * float
+
+val fold_indices :
+  n:int -> k:int ->
+  ?group_ids:(...) Bigarray.Array1.t ->
+  ?seed:int -> unit -> int array array
 ```
 
 Errors:

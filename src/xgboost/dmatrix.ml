@@ -138,6 +138,35 @@ let num_non_missing t =
   check_live t;
   Internal.with_out_ulong (F.xgdmatrix_num_non_missing t.handle)
 
+let slice t idxset =
+  check_live t;
+  let n = Bigarray.Array1.dim idxset in
+  let parent_rows = t.rows in
+  for i = 0 to n - 1 do
+    let r = Int32.to_int idxset.{i} in
+    if r < 0 || r >= parent_rows then
+      raise
+        (Error.Xgboost_error
+           (Error.Invalid_argument
+              (Printf.sprintf
+                 "DMatrix.slice: index %d at position %d out of range \
+                  [0,%d)" r i parent_rows)))
+  done;
+  (* libxgboost expects [const int*]; our Bigarray is int32 with c_layout,
+     which matches int on every platform we target. Pass via the Bigarray's
+     start pointer (no copy). *)
+  let h_out = Internal.alloc_dmatrix_handle () in
+  let idx_ptr =
+    coerce (ptr int32_t) (ptr int) (bigarray_start array1 idxset)
+  in
+  Internal.xgb_check
+    (F.xgdmatrix_slice_dmatrix t.handle idx_ptr (Internal.ulong n) h_out);
+  (* Pin the parent DMatrix and the index buffer for the child's lifetime.
+     The parent's own [pin] field is captured transitively by pinning the
+     parent record. *)
+  make ~handle:!@h_out ~rows:n ~cols:t.cols
+    ~pin:[ Obj.repr t; Obj.repr idxset ]
+
 let free t =
   if not !(t.freed) then begin
     t.freed := true;

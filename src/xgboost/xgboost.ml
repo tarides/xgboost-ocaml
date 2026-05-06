@@ -33,6 +33,8 @@ module DMatrix = struct
 end
 
 module Booster = Booster
+module Eval = Eval
+module Cv = Cv
 
 exception Xgboost_error = Error.Xgboost_error
 
