@@ -5,3 +5,7 @@
 (test
  (name props)
  (libraries xgboost alcotest qcheck-core qcheck-alcotest))
+
+(test
+ (name test_eval_cv)
+ (libraries xgboost alcotest))

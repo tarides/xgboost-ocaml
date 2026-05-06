@@ -113,6 +113,17 @@ module DMatrix : sig
   (** Number of non-missing entries in the matrix. *)
   val num_non_missing : t -> int
 
+  (** [slice t idxset] builds a fresh DMatrix containing rows
+      [idxset.{0}], [idxset.{1}], ... from [t] (in that order, with
+      duplicates allowed). Backed by libxgboost's
+      [XGDMatrixSliceDMatrix]; the parent DMatrix and the index buffer
+      are pinned for the child's lifetime. Useful primitive for
+      cross-validation row subsetting. *)
+  val slice :
+    t ->
+    (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    t
+
   (** Explicitly free the underlying handle. Idempotent. *)
   val free : t -> unit
 
@@ -227,6 +238,113 @@ module Booster : sig
       DMatrix.t ->
       (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t
   end
+end
+
+(** Helpers for evaluating predictions: parsing libxgboost eval
+    strings, computing AUC and ROC curves directly from
+    predictions/labels (no booster required). *)
+module Eval : sig
+  (** Parse a libxgboost eval string of the form
+      ["[12]\\ttest-auc:0.99\\ttrain-logloss:0.05"] into
+      [(metric_name, value)] pairs. The leading [\[<iter>\]] header
+      and trailing whitespace are tolerated. Raises {!Xgboost_error}
+      on malformed input. *)
+  val parse : string -> (string * float) list
+
+  (** [get ~metric s] looks up a single metric by name in the parsed
+      eval string, raising {!Xgboost_error} if absent. *)
+  val get : metric:string -> string -> float
+
+  (** Compute area under the ROC curve directly from predictions and
+      labels. Predictions may be raw scores or probabilities; only the
+      relative ordering matters. Labels are interpreted as binary
+      ([>0.5] is positive). Both inputs must have the same length and
+      contain both classes. O(n log n). *)
+  val auc :
+    predictions:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    labels:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    float
+
+  (** Receiver-operating-characteristic curve: list of [(FPR, TPR)]
+      points starting at [(0.0, 0.0)] and ending at [(1.0, 1.0)],
+      with one intermediate point per unique prediction score. *)
+  val roc :
+    predictions:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    labels:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    (float * float) list
+end
+
+(** k-fold cross validation on top of {!DMatrix.slice} and {!Eval.auc}. *)
+module Cv : sig
+  type fold_result = {
+    fold : int;
+    train_auc : float;
+    test_auc : float;
+    booster : Booster.t;
+  }
+
+  (** [k_fold ~k ~create_booster ~features ~labels ?group_ids
+      ?seed ~iters_per_fold ()] runs binary-classification k-fold CV.
+      Each fold trains a fresh booster (built by [create_booster ()])
+      for [iters_per_fold] rounds on the training subset, evaluates
+      AUC on both training and held-out subsets, and returns the
+      booster alongside.
+
+      [features] and [labels] must have matching length. If
+      [group_ids] is supplied (same length as [labels]), rows sharing
+      a group id are kept in the same fold (greedy balance across
+      folds; cluster-coherent splitting in the Möser-Narayanan
+      sense). [seed] (default a fixed constant) controls the
+      deterministic shuffle of rows or groups.
+
+      [create_booster ~dtrain] receives the per-fold training
+      DMatrix; passing it as cache (e.g.
+      [Booster.create ~cache:[dtrain] ()]) is the easiest way to make
+      sure libxgboost knows the feature count before
+      [update_one_iter] is called. *)
+  val k_fold :
+    k:int ->
+    create_booster:(dtrain:DMatrix.t -> Booster.t) ->
+    features:DMatrix.t ->
+    labels:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    ?group_ids:(int, Bigarray.int_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    ?seed:int ->
+    iters_per_fold:int ->
+    unit ->
+    fold_result list
+
+  (** Same as {!k_fold}, but takes the feature matrix as a 2D Bigarray
+      and constructs a fresh DMatrix per fold via
+      {!DMatrix.of_bigarray2}. Convenient when the caller has raw
+      arrays and doesn't already own a parent DMatrix. *)
+  val k_fold_array2 :
+    k:int ->
+    create_booster:(dtrain:DMatrix.t -> Booster.t) ->
+    features:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array2.t ->
+    labels:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    ?group_ids:(int, Bigarray.int_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    ?seed:int ->
+    iters_per_fold:int ->
+    unit ->
+    fold_result list
+
+  (** Mean and population standard deviation of a metric across folds. *)
+  val summarise :
+    fold_result list ->
+    metric:[ `Train_auc | `Test_auc ] ->
+    float * float
+
+  (** [fold_indices ~n ~k ?group_ids ?seed ()] returns the test-row
+      index array for each fold (i.e. element [f] is the int array of
+      rows that fold [f] holds out for testing). Same fold-generation
+      logic as {!k_fold}; exposed for inspection or custom CV loops. *)
+  val fold_indices :
+    n:int ->
+    k:int ->
+    ?group_ids:(int, Bigarray.int_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    ?seed:int ->
+    unit ->
+    int array array
 end
 
 (** [version ()] returns the (major, minor, patch) of the loaded
