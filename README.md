@@ -152,38 +152,42 @@ bench` then run the harnesses with the same `--workload`/`--rows`/
 
 ## Installation
 
-> **System dependency** — this binding links against libxgboost at
-> compile time. Install it first; opam cannot do it for you.
-
 ```sh
-# Debian / Ubuntu
-sudo apt install libxgboost-dev libxgboost0
-
-# Fedora
-sudo dnf install xgboost-devel
-
-# macOS
-brew install xgboost
-
-# or build from source: https://xgboost.readthedocs.io/en/stable/build.html
+opam install xgboost
 ```
 
-The binding tracks libxgboost ≥ 3.0; older versions will fail to
-link or hit ABI mismatches.
+**No manual system setup is required.** The binding needs libxgboost
+≥ 3.0, and satisfies it in one of two ways, decided at build time:
 
-Then install the OCaml package:
+1. **System library (fast path).** If `pkg-config` finds a system
+   libxgboost ≥ 3.0, the build links it directly. opam installs it for
+   you via `depexts` where the platform packages it:
+
+   ```sh
+   # Debian / Ubuntu — note: only recent releases ship >= 3.0
+   #   (Ubuntu 25.10+, Debian trixie/sid). Older ones fall back to (2).
+   sudo apt install libxgboost-dev
+
+   # macOS
+   brew install xgboost
+   ```
+
+2. **Vendored build (fallback).** If no system libxgboost ≥ 3.0 is
+   available — e.g. Fedora/RHEL/Arch have no package, or the packaged
+   version is too old — the build compiles a pinned copy of XGBoost
+   from the sources bundled under [`vendor/xgboost`](vendor/xgboost)
+   with CMake and links it statically. This needs a C++17 compiler,
+   CMake ≥ 3.18 and OpenMP (all declared as opam build deps), takes a
+   few minutes, and requires no network.
+
+If your system libxgboost lives outside the standard search paths, add
+it to `PKG_CONFIG_PATH` so the fast path picks it up.
+
+Until the opam-repository release lands you can pin the dev repo:
 
 ```sh
-# Once published to opam-repository:
-opam install xgboost
-
-# In the meantime, pin from the dev repo:
 opam pin add xgboost https://github.com/tarides/xgboost-ocaml.git
 ```
-
-The build uses `pkg-config` to discover libxgboost's cflags/libs. If
-your install lives outside the standard system paths, add it to
-`PKG_CONFIG_PATH` or `LIBRARY_PATH`/`C_INCLUDE_PATH`.
 
 ## Building from source
 

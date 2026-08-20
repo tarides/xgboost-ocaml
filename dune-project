@@ -2,7 +2,11 @@
 
 (using ctypes 0.3)
 
-(generate_opam_files true)
+; opam files are hand-maintained (not generated): the xgboost package
+; needs a (depexts ...) field for the hybrid native dependency (see
+; config/discover.ml), which the (package ...) stanza cannot express.
+; Keep the stanzas below in sync with the .opam files by hand.
+(generate_opam_files false)
 
 (name xgboost)
 
@@ -24,6 +28,8 @@
  (depends
   (ocaml (>= 5.1))
   (dune-configurator :build)
+  (conf-cmake :build)
+  (conf-c++ :build)
   (ctypes (>= 0.20))
   (ctypes-foreign (>= 0.20))
   (alcotest :with-test)

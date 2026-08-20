@@ -1,3 +1,15 @@
 (executable
  (name discover)
  (libraries dune-configurator))
+
+; Hybrid libxgboost discovery: emits the C compile/link flags consumed by
+; the ctypes stanza in ../src/bindings/dune. Depends on the vendored
+; XGBoost sources so the fallback CMake build (see discover.ml) is
+; correctly rebuilt when they change and works with no network.
+(rule
+ (targets c_flags.sexp c_library_flags.sexp)
+ (deps
+  discover.exe
+  (source_tree %{project_root}/vendor/xgboost))
+ (action
+  (run ./discover.exe)))
