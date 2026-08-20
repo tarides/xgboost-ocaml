@@ -15,12 +15,28 @@
      sources are committed — so it also covers the opam-repo-ci sandbox
      and distros without a package (Fedora, Arch, ...).
 
-   Either way we emit [c_flags.sexp] / [c_library_flags.sexp], consumed
-   by the ctypes stanza in src/bindings/dune via [(:include ...)]. *)
+   Outputs (all four are declared targets of the rule in config/dune):
+   - c_flags.sexp / c_library_flags.sexp — the C compile/link flags,
+     consumed by the ctypes stanza in src/bindings/dune via
+     [(:include ...)].
+   - libxgboost_vendored.a / libdmlc_vendored.a — on the vendored path,
+     copies of the CMake-built static archives; on the fast path, empty
+     placeholders. They MUST be rule targets: `dune build @install` and
+     `dune runtest` are separate dune invocations, and the final test
+     executables link the archives during runtest. Only declared
+     targets are guaranteed to persist between invocations — the raw
+     CMake build tree is not, so we copy the archives out to these
+     stable, tracked paths and reference them from the link flags. *)
 
 module C = Configurator.V1
 
 let min_major = 3
+
+(* Declared archive targets (see config/dune). On the vendored path the
+   link flags reference these copies rather than the transient CMake
+   build tree. *)
+let out_xgb = "libxgboost_vendored.a"
+let out_dmlc = "libdmlc_vendored.a"
 
 (* ctypes' generated stubs declare XGBoost's borrowed-output pointers as
    non-const [T**] against the header's [const T**]; silence the benign
@@ -32,6 +48,22 @@ let parse_major v =
   match String.split_on_char '.' (String.trim v) with
   | major :: _ -> int_of_string_opt major
   | [] -> None
+
+let touch path =
+  let oc = open_out_bin path in
+  close_out oc
+
+let copy_file ~src ~dst =
+  let ic = open_in_bin src and oc = open_out_bin dst in
+  let len = 65536 in
+  let buf = Bytes.create len in
+  let rec loop () =
+    let n = input ic buf 0 len in
+    if n > 0 then (output oc buf 0 n; loop ())
+  in
+  loop ();
+  close_in ic;
+  close_out oc
 
 let system_conf c =
   match C.Pkg_config.get c with
@@ -76,10 +108,11 @@ let die_on_error label (r : C.Process.result) =
     C.die "%s failed (exit %d)\nstdout:\n%s\nstderr:\n%s" label r.exit_code
       r.stdout r.stderr
 
-(* Build vendored XGBoost as static libraries and return (cflags, libs).
-   [cwd] is this rule's build directory (config/); the vendored sources
-   were copied to ../vendor/xgboost via the (source_tree ...) dep. Paths
-   are made absolute so they survive the later link step. *)
+(* Build vendored XGBoost as static libraries, copy them to the declared
+   archive targets, and return (cflags, libs). [cwd] is this rule's build
+   directory (config/); the vendored sources were copied to
+   ../vendor/xgboost via the (source_tree ...) dep. Paths are absolute so
+   they survive the later, separate link step. *)
 let vendored_conf c =
   let cwd = Sys.getcwd () in
   let abs p = if Filename.is_relative p then Filename.concat cwd p else p in
@@ -110,20 +143,26 @@ let vendored_conf c =
     | path :: _ -> path
     | [] -> C.die "vendored build did not produce %s under %s" name build
   in
-  let xgb = find "libxgboost.a" in
-  let dmlc = find "libdmlc.a" in
+  (* Copy into the declared, persistent targets and link against those. *)
+  copy_file ~src:(find "libxgboost.a") ~dst:out_xgb;
+  copy_file ~src:(find "libdmlc.a") ~dst:out_dmlc;
   let cflags =
     [ "-I"; Filename.concat src "include";
       "-I"; Filename.concat src "dmlc-core/include" ]
   in
-  let libs = [ xgb; dmlc ] @ cxx_omp_libs c @ [ "-lm"; "-lpthread"; "-ldl" ] in
+  let libs = [ abs out_xgb; abs out_dmlc ] @ cxx_omp_libs c @ [ "-lm"; "-lpthread"; "-ldl" ] in
   (cflags, libs)
 
 let () =
   C.main ~name:"xgboost" (fun c ->
       let cflags, libs =
         match system_conf c with
-        | Some conf -> (conf.C.Pkg_config.cflags, conf.C.Pkg_config.libs)
+        | Some conf ->
+            (* Fast path: the archive targets are unused; create empty
+               placeholders so the rule's declared targets all exist. *)
+            touch out_xgb;
+            touch out_dmlc;
+            (conf.C.Pkg_config.cflags, conf.C.Pkg_config.libs)
         | None -> vendored_conf c
       in
       C.Flags.write_sexp "c_flags.sexp" (warn_flags @ cflags);
