@@ -1,9 +1,18 @@
 ; Internal layer-B bindings for libxgboost via the dune ctypes plugin.
 ;
-; The plugin reads <xgboost/c_api.h> via the system include path,
-; resolves cflags/libs through pkg-config, and emits static stubs.
-; Generated entry point is the [C] module; downstream code (the layer-C
-; library and tests/benches) uses [Xgboost_bindings.C.Functions].
+; The plugin reads <xgboost/c_api.h> and emits static stubs. The C
+; compile/link flags come from config/discover.ml (hybrid: system
+; libxgboost when available, else a vendored CMake build), surfaced here
+; through the generated sexps. We copy them from ../../config so the
+; ctypes [(:include ...)] resolver, which looks in this directory, finds
+; them. Generated entry point is the [C] module; downstream code (the
+; layer-C library and tests/benches) uses [Xgboost_bindings.C.Functions].
+
+(rule
+ (copy %{project_root}/config/c_flags.sexp c_flags.sexp))
+
+(rule
+ (copy %{project_root}/config/c_library_flags.sexp c_library_flags.sexp))
 
 (library
  (name xgboost_bindings)
@@ -20,10 +29,8 @@
   ; corresponding -Wincompatible-pointer-types warning at the C compiler.
   (build_flags_resolver
    (vendored
-    (c_flags
-     -Wno-incompatible-pointer-types
-     -Wno-discarded-qualifiers)
-    (c_library_flags -lxgboost)))
+    (c_flags (:include c_flags.sexp))
+    (c_library_flags (:include c_library_flags.sexp))))
   (headers (preamble "#include <xgboost/c_api.h>"))
   (type_description (instance Types) (functor Type_description))
   (function_description

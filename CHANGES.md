@@ -1,6 +1,23 @@
 # Changelog
 
-## unreleased
+## 0.2.0 (2026-08-20)
+
+First opam release.
+
+- Native dependency is now **hybrid**: the build links a system
+  libxgboost ≥ 3.0 when `pkg-config` finds one (installed via opam
+  `depexts` on platforms that package it), and otherwise compiles a
+  pinned, vendored copy of XGBoost from source (bundled under
+  `vendor/xgboost`, CMake, static link, no network required). This lets
+  `opam install xgboost` work on any platform, including those without a
+  distro package.
+- `Xgboost.Eval` — parse `eval_one_iter` metric strings; compute AUC and
+  ROC directly from prediction/label Bigarrays.
+- `Xgboost.Cv.k_fold` — k-fold cross validation with optional
+  group-coherent splitting (`?group_ids`) and `summarise`.
+- `Xgboost.DMatrix.slice` — row-subset a DMatrix.
+
+## 0.1.0
 
 Initial release. Native OCaml bindings to libxgboost ≥ 3.0 covering:
 
