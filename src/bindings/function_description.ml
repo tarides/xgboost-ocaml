@@ -50,17 +50,12 @@ module Functions (F : Ctypes.FOREIGN) = struct
     foreign "XGDMatrixCreateFromDense"
       (string @-> string @-> ptr dmatrix_handle @-> returning int)
 
-  let xgdmatrix_create_from_csr_ex =
-    foreign "XGDMatrixCreateFromCSREx"
-      (ptr size_t @-> ptr uint @-> ptr float
-      @-> size_t @-> size_t @-> size_t
-      @-> ptr dmatrix_handle @-> returning int)
-
   (* Modern (>=2.0) sparse-CSR constructor. [indptr], [indices], [data]
      are JSON __array_interface__ strings describing the underlying
      buffers (which can be int32 / int64 / float32 / float64 — encoded
-     in the typestr field). Avoids the per-element copy that the
-     legacy CSREx requires. *)
+     in the typestr field). The legacy XGDMatrixCreateFromCSREx was
+     removed from libxgboost's C API after 3.0 (its declaration is gone
+     from the 3.4 header), so we bind only this modern entry point. *)
   let xgdmatrix_create_from_csr =
     foreign "XGDMatrixCreateFromCSR"
       (string @-> string @-> string @-> bst_ulong @-> string
