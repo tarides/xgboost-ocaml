@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 (2026-08-21)
+
+- Fix the build against libxgboost >= 3.1: drop a stray, unused binding
+  to `XGDMatrixCreateFromCSREx`, which was removed from the C API after
+  3.0 and broke ctypes stub compilation on newer libxgboost (e.g.
+  Homebrew's 3.4.1). The sparse-CSR path already uses the modern
+  `XGDMatrixCreateFromCSR`.
+
 ## 0.2.0 (2026-08-20)
 
 First opam release.
