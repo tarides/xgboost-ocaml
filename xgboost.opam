@@ -35,10 +35,14 @@ depends: [
   "qcheck-alcotest" {with-test & >= "0.20"}
   "odoc" {with-doc}
 ]
-# The vendored fallback build is Unix-only (cygwin/mingw can't run the
-# CMake path — see config/discover.ml), and there is no system libxgboost
-# on Windows either. Restrict to non-Windows platforms.
-available: [ os != "win32" ]
+# Restrict to platforms where the native dependency is workable:
+#  - not Windows: the vendored CMake fallback can't run under cygwin/mingw
+#    (see config/discover.ml), and there's no system libxgboost there;
+#  - x86_64 / arm64 only: where no system libxgboost >= 3.0 is available,
+#    the fallback compiles XGBoost's C++ from source, which is impractical
+#    on opam-ci's constrained/emulated minor arches (arm32, s390x, ppc64,
+#    riscv64) — they time out or OOM.
+available: [ os != "win32" & (arch = "x86_64" | arch = "arm64") ]
 depexts: [
   # Fast path: a system libxgboost >= 3.0. opam installs it where the
   # platform packages it; otherwise the build falls back to compiling

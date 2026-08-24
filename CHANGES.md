@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.2 (2026-08-24)
+
+- Restrict `available:` to `x86_64` / `arm64` (in addition to the existing
+  non-Windows constraint). Where no system libxgboost >= 3.0 is present the
+  build compiles the vendored XGBoost C++ from source, which is impractical
+  on opam-ci's constrained/emulated minor architectures (arm32, s390x,
+  ppc64, riscv64) — they time out or OOM. No API or behaviour change on
+  supported platforms.
+
 ## 0.2.1 (2026-08-21)
 
 - Fix the build against libxgboost >= 3.1: drop a stray, unused binding
