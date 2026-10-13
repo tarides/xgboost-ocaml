@@ -21,12 +21,10 @@
      [(:include ...)].
    - libxgboost_vendored.a / libdmlc_vendored.a — on the vendored path,
      copies of the CMake-built static archives; on the fast path, empty
-     placeholders. They MUST be rule targets: `dune build @install` and
-     `dune runtest` are separate dune invocations, and the final test
-     executables link the archives during runtest. Only declared
-     targets are guaranteed to persist between invocations — the raw
-     CMake build tree is not, so we copy the archives out to these
-     stable, tracked paths and reference them from the link flags. *)
+     archives. Declared targets persist between Dune invocations;
+     src/bindings/dune copies and installs them beside the OCaml
+     archives. Link flags use library names and $CAMLORIGIN so installed
+     consumers do not depend on the source tree or installation prefix. *)
 
 module C = Configurator.V1
 
@@ -49,8 +47,9 @@ let parse_major v =
   | major :: _ -> int_of_string_opt major
   | [] -> None
 
-let touch path =
+let empty_archive path =
   let oc = open_out_bin path in
+  output_string oc "!<arch>\n";
   close_out oc
 
 let copy_file ~src ~dst =
@@ -111,8 +110,8 @@ let die_on_error label (r : C.Process.result) =
 (* Build vendored XGBoost as static libraries, copy them to the declared
    archive targets, and return (cflags, libs). [cwd] is this rule's build
    directory (config/); the vendored sources were copied to
-   ../vendor/xgboost via the (source_tree ...) dep. Paths are absolute so
-   they survive the later, separate link step. *)
+   ../vendor/xgboost via the (source_tree ...) dep. Absolute paths are
+   needed for CMake inputs and header discovery, not installed linking. *)
 let vendored_conf c =
   let cwd = Sys.getcwd () in
   let abs p = if Filename.is_relative p then Filename.concat cwd p else p in
@@ -150,7 +149,10 @@ let vendored_conf c =
     [ "-I"; Filename.concat src "include";
       "-I"; Filename.concat src "dmlc-core/include" ]
   in
-  let libs = [ abs out_xgb; abs out_dmlc ] @ cxx_omp_libs c @ [ "-lm"; "-lpthread"; "-ldl" ] in
+  let libs =
+    [ "-Lsrc/bindings"; "-lxgboost_vendored"; "-ldmlc_vendored" ]
+    @ cxx_omp_libs c @ [ "-lm"; "-lpthread"; "-ldl" ]
+  in
   (cflags, libs)
 
 let () =
@@ -160,8 +162,8 @@ let () =
         | Some conf ->
             (* Fast path: the archive targets are unused; create empty
                placeholders so the rule's declared targets all exist. *)
-            touch out_xgb;
-            touch out_dmlc;
+            empty_archive out_xgb;
+            empty_archive out_dmlc;
             (conf.C.Pkg_config.cflags, conf.C.Pkg_config.libs)
         | None -> vendored_conf c
       in

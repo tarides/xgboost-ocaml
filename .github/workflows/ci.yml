@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        ocaml-version: ["5.1", "5.2", "5.3"]
+        ocaml-version: ["5.1", "5.2", "5.3", "5.5"]
         # Exercise both native-dependency paths of the hybrid build:
         #   system   — link a system libxgboost >= 3.0 (fast path)
         #   vendored — no system lib; compile vendor/xgboost with CMake
@@ -23,6 +23,10 @@ jobs:
         exclude:
           - { ocaml-version: "5.1", mode: vendored }
           - { ocaml-version: "5.2", mode: vendored }
+          - { ocaml-version: "5.3", mode: vendored }
+        include:
+          - { os: macos-latest, ocaml-version: "5.3", mode: system }
+          - { os: macos-latest, ocaml-version: "5.3", mode: vendored }
 
     runs-on: ${{ matrix.os }}
 
@@ -41,12 +45,13 @@ jobs:
       # cmake/g++/libgomp are needed everywhere: the conf-cmake/conf-c++
       # build-deps check for them, and the vendored path builds with them.
       - name: Install build toolchain
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config cmake g++ libgomp1
 
       - name: Install libxgboost 3.0 (system mode only)
-        if: matrix.mode == 'system'
+        if: runner.os == 'Linux' && matrix.mode == 'system'
         run: |
           # Ubuntu's packaged libxgboost is older than the >=3.0 entry
           # points we bind. Install 3.0.0 from the upstream Python wheel
@@ -87,6 +92,14 @@ jobs:
           nm -D /usr/lib/x86_64-linux-gnu/libxgboost.so | grep -E ' T XGBoosterTrainOneIter$' \
             || (echo "libxgboost.so missing XGBoosterTrainOneIter" && exit 1)
 
+      - name: Install macOS build toolchain
+        if: runner.os == 'macOS'
+        run: brew install cmake pkg-config libomp
+
+      - name: Install macOS system XGBoost
+        if: runner.os == 'macOS' && matrix.mode == 'system'
+        run: brew install xgboost
+
       - name: Set up OCaml ${{ matrix.ocaml-version }}
         uses: ocaml/setup-ocaml@v3
         with:
@@ -96,7 +109,14 @@ jobs:
       # managed explicitly above so opam never pulls a conflicting
       # distro libxgboost underneath us.
       - name: Install OCaml deps
-        run: opam install . --deps-only --with-test --no-depexts --yes
+        run: opam install ./xgboost.opam --deps-only --with-test --no-depexts --yes
+
+      - name: Force vendored discovery
+        if: matrix.mode == 'vendored'
+        run: |
+          mkdir -p "$RUNNER_TEMP/empty-pkgconfig"
+          echo 'PKG_CONFIG_PATH=' >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_LIBDIR=$RUNNER_TEMP/empty-pkgconfig" >> "$GITHUB_ENV"
 
       - name: Lint opam metadata
         run: opam lint xgboost.opam
@@ -107,12 +127,15 @@ jobs:
       - name: Run tests
         run: opam exec -- dune runtest -p xgboost -j 4
 
+      - name: Check installed consumer linking
+        run: bash scripts/check-installed-linking.sh "$GITHUB_WORKSPACE" "${{ matrix.mode }}"
+
       # The pure-C reference and the ASan run both link the system
       # libxgboost, so they only make sense on the system-mode job.
       - name: Build C reference
-        if: matrix.mode == 'system'
+        if: runner.os == 'Linux' && matrix.mode == 'system'
         run: make -C bin/c_reference
 
       - name: Run tests under AddressSanitizer
-        if: matrix.mode == 'system'
+        if: runner.os == 'Linux' && matrix.mode == 'system'
         run: ./scripts/run-asan.sh

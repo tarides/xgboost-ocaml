@@ -419,11 +419,21 @@ inside libxgboost.
 ## Testing
 
 ```sh
-opam exec -- dune runtest               # alcotest + qcheck (~10 s)
-./scripts/run-asan.sh                   # same suite under AddressSanitizer
-make -C bin/c_reference check           # standalone C correctness check
-./scripts/regen-fixtures.sh             # refresh the cross-layer fixture
+opam exec -- dune runtest                                 # alcotest + qcheck (~10 s)
+./scripts/run-asan.sh                                     # same suite under AddressSanitizer
+make -C bin/c_reference check                             # standalone C correctness check
+./scripts/regen-fixtures.sh                               # refresh the cross-layer fixture
+bash scripts/check-installed-linking.sh "$PWD" vendored   # ensure linking doesn't break
+bash scripts/check-installed-linking.sh "$PWD" system
 ```
+
+The installed-linking check builds and tests a fresh source copy, stages
+the package, removes that copy, and relocates the installation. It then
+links native and complete-bytecode consumers and verifies training,
+prediction, and model-buffer restoration. Run it with the package's test
+dependencies and `ocamlfind` installed; `system` also requires libxgboost
+≥ 3.0 visible through `pkg-config`. The `vendored` mode forces the bundled
+fallback even if a system library is available.
 
 The test suite includes:
 - **Layer-parallel parity** — the same training run is reproduced in
