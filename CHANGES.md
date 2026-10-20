@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 (2026-08-24)
 
 - Bundle the vendored XGBoost and dmlc static archives (and self-contained
   shared companions) with the bindings through dune's `foreign_archives`.
