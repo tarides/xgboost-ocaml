@@ -29,29 +29,42 @@ fi
 
 opam exec -- dune build --root "$scratch/source" --only-packages xgboost \
   --profile release -j "${BUILD_JOBS:-2}" @install @runtest
-flags="$scratch/source/_build/default/config/c_library_flags.sexp"
-if [[ "$mode" == vendored ]]; then
-  grep -F -- '-lxgboost_vendored' "$flags"
-  grep -F -- '-ldmlc_vendored' "$flags"
-else
-  if grep -Fq -- '-lxgboost_vendored' "$flags"; then
-    echo "Expected system native provider, got vendored fallback" >&2
-    exit 1
-  fi
-fi
 
 opam exec -- dune install --root "$scratch/source" \
   --prefix "$scratch/install" xgboost
 bindings="$scratch/install/lib/xgboost/bindings"
+# Confirm the requested native provider is the one that was actually built:
+# on the vendored path the bundled archives carry real objects, on the
+# system path they are empty placeholders (the real library is a system
+# .so resolved through pkg-config).
 for archive in libxgboost_vendored.a libdmlc_vendored.a; do
   test -s "$bindings/$archive"
-  ar -t "$bindings/$archive" > /dev/null
+  members=$(ar -t "$bindings/$archive" | grep -c . || true)
+  if [[ "$mode" == vendored ]]; then
+    if [[ "$members" -eq 0 ]]; then
+      echo "Expected vendored fallback, but $archive has no objects" >&2
+      exit 1
+    fi
+  else
+    if [[ "$members" -ne 0 ]]; then
+      echo "Expected system provider, but $archive is a non-empty vendored archive" >&2
+      exit 1
+    fi
+  fi
 done
+# The installed link metadata must carry no build-tree path: neither a
+# temporary source directory nor a dangling build-relative -L. dune locates
+# the bundled archives (declared via foreign_archives) through its own
+# per-package search path, so relocation is exercised by the consumer build
+# and run below rather than by any recorded path.
 for suffix in cma cmxa; do
   metadata=$(opam exec -- ocamlobjinfo "$bindings/xgboost_bindings.$suffix")
-  printf '%s\n' "$metadata" | grep -F -- '-L$CAMLORIGIN'
   if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq "$scratch/source"; then
     echo "Installed link metadata retains a temporary source path" >&2
+    exit 1
+  fi
+  if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq -- '-Lsrc/bindings'; then
+    echo "Installed link metadata retains a dangling relative -L" >&2
     exit 1
   fi
 done

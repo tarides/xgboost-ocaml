@@ -15,26 +15,40 @@
      sources are committed — so it also covers the opam-repo-ci sandbox
      and distros without a package (Fedora, Arch, ...).
 
-   Outputs (all four are declared targets of the rule in config/dune):
+   Outputs (all six are declared targets of the rule in config/dune):
    - c_flags.sexp / c_library_flags.sexp — the C compile/link flags,
      consumed by the ctypes stanza in src/bindings/dune via
-     [(:include ...)].
-   - libxgboost_vendored.a / libdmlc_vendored.a — on the vendored path,
-     copies of the CMake-built static archives; on the fast path, empty
-     archives. Declared targets persist between Dune invocations;
-     src/bindings/dune copies and installs them beside the OCaml
-     archives. Link flags use library names and $CAMLORIGIN so installed
-     consumers do not depend on the source tree or installation prefix. *)
+     [(:include ...)]. On the vendored path these carry only the C++ /
+     OpenMP / system dependencies; the vendored archives are bundled
+     through dune, not named here.
+   - libxgboost_vendored.a / libdmlc_vendored.a and their shared
+     companions dllxgboost_vendored.so / dlldmlc_vendored.so — on the
+     vendored path, the CMake-built static archives plus self-contained
+     shared objects built from them; on the fast path, empty placeholders.
+     src/bindings/dune declares them as [(foreign_archives ...)], so dune
+     links the .a into native / byte_complete consumers, loads the .so for
+     the plain-bytecode path, and installs both — resolving their location
+     itself, with no source-tree or install-prefix path recorded in the
+     link metadata. *)
 
 module C = Configurator.V1
 
 let min_major = 3
 
-(* Declared archive targets (see config/dune). On the vendored path the
-   link flags reference these copies rather than the transient CMake
-   build tree. *)
+(* Declared archive targets (see config/dune). On the vendored path these
+   are the persistent copies dune bundles via foreign_archives, rather than
+   the transient CMake build tree. *)
 let out_xgb = "libxgboost_vendored.a"
 let out_dmlc = "libdmlc_vendored.a"
+
+(* Shared companions of the archives above. dune's [(foreign_archives ...)]
+   links the .a into native / byte_complete consumers and loads the .so for
+   the plain-bytecode path (where C stubs are dlopen'd rather than statically
+   linked). Each .so is self-contained — it whole-archives its own objects
+   plus the C++/OpenMP runtime — so the bytecode loader can resolve the stub
+   dll's XGBoost references (dlopen uses RTLD_NOW). *)
+let out_xgb_dll = "dllxgboost_vendored.so"
+let out_dmlc_dll = "dlldmlc_vendored.so"
 
 (* ctypes' generated stubs declare XGBoost's borrowed-output pointers as
    non-const [T**] against the header's [const T**]; silence the benign
@@ -107,6 +121,33 @@ let die_on_error label (r : C.Process.result) =
     C.die "%s failed (exit %d)\nstdout:\n%s\nstderr:\n%s" label r.exit_code
       r.stdout r.stderr
 
+(* The C/C++ compiler driver used to link the shared companions. *)
+let cc c = Option.value (C.ocaml_config_var c "c_compiler") ~default:"cc"
+
+(* Link [archives] whole into a self-contained shared object [out], pulling
+   in [libs] (C++/OpenMP runtime, etc.). Whole-archiving keeps every object
+   so the bytecode loader finds XGBoost's symbols. Platform-specific: GNU ld
+   uses --whole-archive, the macOS linker uses -force_load per archive and
+   needs an @rpath install name so the dll is found from the stublibs dir. *)
+let build_dll c ~out ~archives ~libs =
+  let args =
+    if is_macos c then
+      ("-dynamiclib" :: "-o" :: out
+       :: List.map (fun a -> "-Wl,-force_load," ^ a) archives)
+      @ [ "-install_name"; "@rpath/" ^ out ] @ libs
+    else
+      ("-shared" :: "-o" :: out :: "-Wl,--whole-archive" :: archives)
+      @ ("-Wl,--no-whole-archive" :: libs)
+  in
+  die_on_error ("link " ^ out) (C.Process.run c (cc c) args)
+
+(* A valid, empty shared object for the system (fast) path, so the
+   [(foreign_archives ...)] targets exist and load as no-ops. *)
+let empty_dll c out =
+  let shared = if is_macos c then "-dynamiclib" else "-shared" in
+  die_on_error ("link empty " ^ out)
+    (C.Process.run c (cc c) [ shared; "-o"; out; "-xc"; "/dev/null" ])
+
 (* Build vendored XGBoost as static libraries, copy them to the declared
    archive targets, and return (cflags, libs). [cwd] is this rule's build
    directory (config/); the vendored sources were copied to
@@ -149,10 +190,17 @@ let vendored_conf c =
     [ "-I"; Filename.concat src "include";
       "-I"; Filename.concat src "dmlc-core/include" ]
   in
-  let libs =
-    [ "-Lsrc/bindings"; "-lxgboost_vendored"; "-ldmlc_vendored" ]
-    @ cxx_omp_libs c @ [ "-lm"; "-lpthread"; "-ldl" ]
-  in
+  (* The vendored static archives themselves are bundled via dune
+     [(foreign_archives ...)] in src/bindings/dune, not named here: that
+     keeps dune in charge of their link path for both the in-tree build
+     and a relocated install. Here we only name the OpenMP / C++ runtime
+     and system libraries those archives depend on. *)
+  let libs = cxx_omp_libs c @ [ "-lm"; "-lpthread"; "-ldl" ] in
+  (* Shared companions for the plain-bytecode load path. xgboost pulls dmlc
+     in too so a single dll satisfies the stub dll's references regardless
+     of load order. *)
+  build_dll c ~out:out_xgb_dll ~archives:[ out_xgb; out_dmlc ] ~libs;
+  build_dll c ~out:out_dmlc_dll ~archives:[ out_dmlc ] ~libs;
   (cflags, libs)
 
 let () =
@@ -164,6 +212,8 @@ let () =
                placeholders so the rule's declared targets all exist. *)
             empty_archive out_xgb;
             empty_archive out_dmlc;
+            empty_dll c out_xgb_dll;
+            empty_dll c out_dmlc_dll;
             (conf.C.Pkg_config.cflags, conf.C.Pkg_config.libs)
         | None -> vendored_conf c
       in
