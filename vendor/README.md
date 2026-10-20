@@ -7,6 +7,43 @@ CMake and links it statically when no system libxgboost >= 3.0 is found
 so the build needs no network — which is what lets `opam install xgboost`
 work in the opam-repository CI sandbox and on distros without a package.
 
+## Platform coverage
+
+Snapshot as of 2026-10-20. On most opam-repository CI targets the build
+takes this vendored path, because no usable system libxgboost exists
+there. The fast path needs three things: a packaged libxgboost >= 3.0,
+an `xgboost.pc` for pkg-config, and a `depexts` entry in `xgboost.opam`
+so that opam installs it.
+
+The targets come from opam-repo-ci (`lib/build.ml`) and
+`ocaml-dockerfile`'s active distro list (`src-opam/distro.ml`, `main`
+branch). The deployed CI may lag behind the newest entries.
+
+| CI target | Packaged libxgboost | depext | Path |
+|---|---|---|---|
+| Debian 13 trixie (main distro; also arm64/ppc64le/s390x) | 3.0.0 | `libxgboost-dev` | system |
+| Debian 12 bookworm | 1.7.4 (too old) | `libxgboost-dev` | vendored |
+| Debian testing (forky) / unstable | 3.3.0 | `libxgboost-dev` | system |
+| Ubuntu 22.04 / 24.04 (also riscv64) / 25.04 | 1.5.2 / 2.0.3 / 2.1.4 (too old) | `libxgboost-dev` | vendored |
+| Ubuntu 25.10 / 26.04 | 3.0.0 / 3.0.4 | `libxgboost-dev` | system |
+| Alpine 3.24 | none | — | vendored |
+| Arch | none (AUR only) | — | vendored |
+| CentOS Stream 9 / 10 | none (not in EPEL either) | — | vendored |
+| Fedora 42 / 43 / 44 | none | — | vendored |
+| openSUSE Leap 16.0 | none | — | vendored |
+| openSUSE Tumbleweed | 2.0.0 (too old) | — | vendored |
+| macOS Homebrew (arm64, x86_64) | 3.4.2 | `xgboost` | system |
+| FreeBSD 15.1 | `misc/xgboost` 3.4.1 | none | vendored |
+
+Debian's `libxgboost-dev` ships `xgboost.pc`. opam treats Ubuntu as
+`os-family = "debian"`, so on Ubuntu <= 25.04 and Debian 12 the depext
+installs a libxgboost that `discover.ml` then rejects as < 3.0. FreeBSD
+could use the system path with a depext, provided the port installs
+`xgboost.pc` (not verified).
+
+Sources: Repology, sources.debian.org and madison, Launchpad, Fedora
+mdapi, and the Arch, Alpine and openSUSE package indexes.
+
 ## Provenance
 
 - Upstream: https://github.com/dmlc/xgboost
