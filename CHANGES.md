@@ -2,10 +2,12 @@
 
 ## Unreleased
 
-- Install the vendored XGBoost and dmlc static archives with the bindings
-  and resolve them relative to the OCaml archives. Downstream executables
-  can link after the package's build directory is removed, including
-  after relocating the installation.
+- Bundle the vendored XGBoost and dmlc static archives (and self-contained
+  shared companions) with the bindings through dune's `foreign_archives`.
+  Downstream native, complete-bytecode, and plain-bytecode executables can
+  link after the package's build directory is removed, including after
+  relocating the installation, with no build-tree path left in the link
+  metadata.
 - Fix the macOS vendored static build by skipping OpenMP dylib
   post-processing when no dylib is built.
 

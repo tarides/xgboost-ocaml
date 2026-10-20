@@ -22,13 +22,25 @@
 (rule
  (copy %{project_root}/config/libdmlc_vendored.a libdmlc_vendored.a))
 
+(rule
+ (copy %{project_root}/config/dllxgboost_vendored.so dllxgboost_vendored.so))
+
+(rule
+ (copy %{project_root}/config/dlldmlc_vendored.so dlldmlc_vendored.so))
+
 (library
  (name xgboost_bindings)
  (public_name xgboost.bindings)
  (wrapped true)
  (libraries ctypes)
- ; OCaml expands $CAMLORIGIN relative to the archive carrying this option.
- (library_flags (:standard -ccopt "-L$CAMLORIGIN"))
+ ; Bundle the vendored static archives (and their .so companions) through
+ ; dune rather than raw link flags. Dune links the .a into native and
+ ; byte_complete consumers and loads the .so for the plain-bytecode path,
+ ; resolving their location for both the in-tree build and a relocated
+ ; install — so no manual -L (and no dangling build-relative path) is
+ ; recorded in the link metadata. On the system path these are empty
+ ; placeholders that contribute nothing.
+ (foreign_archives xgboost_vendored dmlc_vendored)
  (flags (:standard -w -9-27-32-33-37))
  (ctypes
   (external_library_name xgboost)
@@ -49,10 +61,3 @@
    (functor Function_description))
   (generated_types Types_generated)
   (generated_entry_point C)))
-
-(install
- (section lib)
- (package xgboost)
- (files
-  (libxgboost_vendored.a as bindings/libxgboost_vendored.a)
-  (libdmlc_vendored.a as bindings/libdmlc_vendored.a)))
