@@ -38,8 +38,16 @@
  ; byte_complete consumers and loads the .so for the plain-bytecode path,
  ; resolving their location for both the in-tree build and a relocated
  ; install — so no manual -L (and no dangling build-relative path) is
- ; recorded in the link metadata. On the system path these are empty
- ; placeholders that contribute nothing.
+ ; recorded in the link metadata.
+ ;
+ ; foreign_archives records these names in the link / dll-load closure
+ ; unconditionally, so on the system path (where discover.ml writes empty
+ ; placeholder .a/.so) the placeholders are still installed and referenced.
+ ; They are inert — empty archives and symbol-less shared objects that
+ ; contribute nothing to a link — but cannot be dropped: dune has no
+ ; build-time-conditional foreign_archives (enabled_if cannot see pkg-config
+ ; discovery), and removing them would leave the recorded -lxgboost_vendored
+ ; references dangling. check-installed-linking.sh asserts this inertness.
  (foreign_archives xgboost_vendored dmlc_vendored)
  (flags (:standard -w -9-27-32-33-37))
  (ctypes

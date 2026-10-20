@@ -52,6 +52,32 @@ for archive in libxgboost_vendored.a libdmlc_vendored.a; do
     fi
   fi
 done
+# foreign_archives records the vendored archives and their dll companions in
+# the link/dll-load closure in BOTH modes, so on the system path four inert
+# placeholders are installed by design (they cannot be dropped without
+# breaking the recorded references — see src/bindings/dune). Assert they are
+# genuinely inert there, and real on the vendored path: the stub dll export
+# XGBoost symbols only when the fallback is active.
+stublibs="$scratch/install/lib/stublibs"
+test -e "$stublibs/dllxgboost_vendored.so"
+test -e "$stublibs/dlldmlc_vendored.so"
+case "$(uname -s)" in
+  Darwin) xgb_syms=$(nm -gU "$stublibs/dllxgboost_vendored.so" 2>/dev/null || true) ;;
+  *)      xgb_syms=$(nm -D --defined-only "$stublibs/dllxgboost_vendored.so" 2>/dev/null || true) ;;
+esac
+# Match in-shell rather than through a pipe: piping the (large) symbol dump
+# into `grep -q` would SIGPIPE the writer and, under pipefail, misreport.
+if [[ "$mode" == vendored ]]; then
+  if [[ "$xgb_syms" != *XGBoosterCreate* ]]; then
+    echo "Expected vendored dll to export XGBoost symbols" >&2
+    exit 1
+  fi
+else
+  if [[ "$xgb_syms" == *XGBoosterCreate* ]]; then
+    echo "Expected system placeholder dll to export no XGBoost symbols" >&2
+    exit 1
+  fi
+fi
 # The installed link metadata must carry no build-tree path: neither a
 # temporary source directory nor a dangling build-relative -L. dune locates
 # the bundled archives (declared via foreign_archives) through its own
