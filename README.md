@@ -499,5 +499,8 @@ reports flagging anything that looks off are especially welcome.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). libxgboost itself is Apache-2.0 and is
-linked dynamically; this binding does not redistribute its source.
+MIT. See [LICENSE](LICENSE). libxgboost itself is Apache-2.0: on the system
+path it is linked dynamically, while the vendored fallback bundles XGBoost's
+Apache-2.0 sources under [`vendor/xgboost`](vendor/xgboost) and links them
+statically — so a package built that way also ships the compiled XGBoost
+archives.
