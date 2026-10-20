@@ -433,7 +433,10 @@ links native, complete-bytecode, and plain-bytecode consumers and verifies
 training, prediction, and model-buffer restoration. Run it with the
 package's test dependencies and `ocamlfind` installed; `system` also
 requires libxgboost ≥ 3.0 visible through `pkg-config`. The `vendored` mode
-forces the bundled fallback even if a system library is available.
+forces the bundled fallback even if a system library is available. Set
+`REUSE_BUILD=1` to install from the checkout's existing `dune build -p
+xgboost` output instead of building a fresh copy (CI does this), or
+`RUN_TESTS=0` to skip the test suite in the fresh build.
 
 The test suite includes:
 - **Layer-parallel parity** — the same training run is reproduced in

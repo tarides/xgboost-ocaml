@@ -8,12 +8,32 @@ case "$mode" in
   *) echo "Unknown native provider: $mode" >&2; exit 2 ;;
 esac
 
+# REUSE_BUILD=1 installs from the checkout's existing _build (as left by
+# `dune build -p xgboost`) instead of building a fresh copy, then hides
+# that _build while consumers link. CI uses it to avoid building the
+# vendored XGBoost a second time. RUN_TESTS=0 skips @runtest in the
+# fresh build; REUSE_BUILD implies it.
+reuse_build=${REUSE_BUILD:-0}
+run_tests=${RUN_TESTS:-1}
+
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/xgboost-installed-linking.XXXXXX")
-trap 'rm -rf -- "$scratch"' EXIT
-mkdir -p "$scratch/source" "$scratch/empty-pkgconfig" "$scratch/consumer"
-# Copy the package inputs, including uncommitted edits, without local build caches.
-tar -C "$checkout" -cf - dune-project xgboost.opam LICENSE CHANGES.md README.md \
-  config src vendor test | tar -x -C "$scratch/source"
+hidden_build="$checkout/_build.hidden-by-installed-linking"
+cleanup() {
+  if [[ -d "$hidden_build" ]]; then mv -- "$hidden_build" "$checkout/_build"; fi
+  rm -rf -- "$scratch"
+}
+trap cleanup EXIT
+mkdir -p "$scratch/empty-pkgconfig" "$scratch/consumer"
+if [[ "$reuse_build" == 1 ]]; then
+  root="$checkout"
+  test -d "$root/_build" || { echo "REUSE_BUILD=1 needs an existing $root/_build" >&2; exit 2; }
+else
+  root="$scratch/source"
+  mkdir -p "$root"
+  # Copy the package inputs, including uncommitted edits, without local build caches.
+  tar -C "$checkout" -cf - dune-project xgboost.opam LICENSE CHANGES.md README.md \
+    config src vendor test | tar -x -C "$root"
+fi
 cp "$checkout/scripts/installed_linking_probe.ml" "$scratch/consumer/probe.ml"
 export DUNE_CACHE=disabled
 export OMP_NUM_THREADS=1
@@ -27,10 +47,18 @@ else
   pkg-config --modversion xgboost
 fi
 
-opam exec -- dune build --root "$scratch/source" --only-packages xgboost \
-  --profile release -j "${BUILD_JOBS:-2}" @install @runtest
+if [[ "$reuse_build" == 1 ]]; then
+  # Same flags as CI's build step, so this is a no-op over its _build.
+  # (-p implies --root ., hence the cd.)
+  (cd "$root" && opam exec -- dune build -p xgboost -j "${BUILD_JOBS:-2}" @install)
+else
+  targets=(@install)
+  if [[ "$run_tests" == 1 ]]; then targets+=(@runtest); fi
+  opam exec -- dune build --root "$root" --only-packages xgboost \
+    --profile release -j "${BUILD_JOBS:-2}" "${targets[@]}"
+fi
 
-opam exec -- dune install --root "$scratch/source" \
+opam exec -- dune install --root "$root" \
   --prefix "$scratch/install" xgboost
 bindings="$scratch/install/lib/xgboost/bindings"
 # Confirm the requested native provider is the one that was actually built:
@@ -85,8 +113,8 @@ fi
 # and run below rather than by any recorded path.
 for suffix in cma cmxa; do
   metadata=$(opam exec -- ocamlobjinfo "$bindings/xgboost_bindings.$suffix")
-  if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq "$scratch/source"; then
-    echo "Installed link metadata retains a temporary source path" >&2
+  if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq "$root"; then
+    echo "Installed link metadata retains the build source path" >&2
     exit 1
   fi
   if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq -- '-Lsrc/bindings'; then
@@ -95,7 +123,12 @@ for suffix in cma cmxa; do
   fi
 done
 
-rm -rf -- "$scratch/source"
+# Make the build directory disappear, as opam does after installing.
+if [[ "$reuse_build" == 1 ]]; then
+  mv -- "$root/_build" "$hidden_build"
+else
+  rm -rf -- "$root"
+fi
 mv "$scratch/install" "$scratch/relocated-install"
 export OCAMLPATH="$scratch/relocated-install/lib${OCAMLPATH:+:$OCAMLPATH}"
 resolved=$(opam exec -- ocamlfind query xgboost.bindings)
@@ -129,4 +162,4 @@ if [[ "$mode" == vendored ]]; then
     fi
   done
 fi
-echo "Installed consumer passed after source removal and prefix relocation ($mode)"
+echo "Installed consumer passed after build-directory removal and prefix relocation ($mode)"
