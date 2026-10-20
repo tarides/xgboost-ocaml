@@ -11,14 +11,24 @@
 (rule
  (copy %{project_root}/config/c_flags.sexp c_flags.sexp))
 
+; ctypes must not start linking before the archives are copied here.
 (rule
- (copy %{project_root}/config/c_library_flags.sexp c_library_flags.sexp))
+ (deps libxgboost_vendored.a libdmlc_vendored.a)
+ (action (copy %{project_root}/config/c_library_flags.sexp c_library_flags.sexp)))
+
+(rule
+ (copy %{project_root}/config/libxgboost_vendored.a libxgboost_vendored.a))
+
+(rule
+ (copy %{project_root}/config/libdmlc_vendored.a libdmlc_vendored.a))
 
 (library
  (name xgboost_bindings)
  (public_name xgboost.bindings)
  (wrapped true)
  (libraries ctypes)
+ ; OCaml expands $CAMLORIGIN relative to the archive carrying this option.
+ (library_flags (:standard -ccopt "-L$CAMLORIGIN"))
  (flags (:standard -w -9-27-32-33-37))
  (ctypes
   (external_library_name xgboost)
@@ -39,3 +49,14 @@
    (functor Function_description))
   (generated_types Types_generated)
   (generated_entry_point C)))
+
+(rule
+ (copy %{project_root}/config/install_files.sexp install_files.sexp))
+
+; The archives are installed only on the vendored path; on the fast path
+; discover.ml writes an empty list and the placeholders stay in _build.
+(install
+ (section lib)
+ (package xgboost)
+ (files
+  (include install_files.sexp)))

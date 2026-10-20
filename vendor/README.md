@@ -41,3 +41,7 @@ run (`-DUSE_CUDA=OFF`, `-DBUILD_STATIC_LIB=ON`, `-DUSE_OPENMP=ON`).
 
 Re-clone at the new tag, re-apply the pruning above, update the tag here,
 and rebuild both paths (see the repo README's verification steps).
+
+Local CMake change: the macOS OpenMP dylib post-processing is skipped
+when `BUILD_STATIC_LIB` is enabled. Preserve this guard when updating
+until the bundled upstream version includes it.

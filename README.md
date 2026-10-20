@@ -419,11 +419,24 @@ inside libxgboost.
 ## Testing
 
 ```sh
-opam exec -- dune runtest               # alcotest + qcheck (~10 s)
-./scripts/run-asan.sh                   # same suite under AddressSanitizer
-make -C bin/c_reference check           # standalone C correctness check
-./scripts/regen-fixtures.sh             # refresh the cross-layer fixture
+opam exec -- dune runtest                                 # alcotest + qcheck (~10 s)
+./scripts/run-asan.sh                                     # same suite under AddressSanitizer
+make -C bin/c_reference check                             # standalone C correctness check
+./scripts/regen-fixtures.sh                               # refresh the cross-layer fixture
+bash scripts/check-installed-linking.sh "$PWD" vendored   # ensure linking doesn't break
+bash scripts/check-installed-linking.sh "$PWD" system
 ```
+
+The installed-linking check builds and tests a fresh source copy, stages
+the package, removes that copy, and relocates the installation. It then
+links native, ordinary bytecode, and complete-bytecode consumers and
+verifies training, prediction, and model-buffer restoration. Run it with
+the package's test dependencies and `ocamlfind` installed; `system` also
+requires libxgboost ≥ 3.0 visible through `pkg-config`. The `vendored` mode
+forces the bundled fallback even if a system library is available. Set
+`REUSE_BUILD=1` to install from the checkout's existing
+`dune build -p xgboost` output instead of building a fresh copy (CI does
+this), or `RUN_TESTS=0` to skip the test suite in the fresh build.
 
 The test suite includes:
 - **Layer-parallel parity** — the same training run is reproduced in
@@ -486,5 +499,10 @@ reports flagging anything that looks off are especially welcome.
 
 ## License
 
-MIT. See [LICENSE](LICENSE). libxgboost itself is Apache-2.0 and is
-linked dynamically; this binding does not redistribute its source.
+The OCaml bindings are MIT licensed; see [LICENSE](LICENSE). The bundled
+XGBoost source is Apache-2.0 licensed; see
+[vendor/xgboost/LICENSE](vendor/xgboost/LICENSE). A system libxgboost is
+linked dynamically; the vendored fallback installs static XGBoost and
+dmlc archives alongside the bindings. Bundled dependency license files
+are retained in the source tree, including
+[dmlc-core's license](vendor/xgboost/dmlc-core/LICENSE).

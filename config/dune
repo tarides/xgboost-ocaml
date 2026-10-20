@@ -15,7 +15,8 @@
   c_flags.sexp
   c_library_flags.sexp
   libxgboost_vendored.a
-  libdmlc_vendored.a)
+  libdmlc_vendored.a
+  install_files.sexp)
  (deps
   discover.exe
   (source_tree %{project_root}/vendor/xgboost))
