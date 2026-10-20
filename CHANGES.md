@@ -1,11 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 (2026-10-20)
 
 - Install the vendored XGBoost and dmlc static archives with the bindings
   and resolve them relative to the OCaml archives. Downstream executables
   can link after the package's build directory is removed, including
   after relocating the installation.
+- On the system-libxgboost path, do not install the empty vendored
+  placeholder archives.
 - Fix the macOS vendored static build by skipping OpenMP dylib
   post-processing when no dylib is built.
 
