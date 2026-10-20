@@ -429,11 +429,11 @@ bash scripts/check-installed-linking.sh "$PWD" system
 
 The installed-linking check builds and tests a fresh source copy, stages
 the package, removes that copy, and relocates the installation. It then
-links native and complete-bytecode consumers and verifies training,
-prediction, and model-buffer restoration. Run it with the package's test
-dependencies and `ocamlfind` installed; `system` also requires libxgboost
-≥ 3.0 visible through `pkg-config`. The `vendored` mode forces the bundled
-fallback even if a system library is available.
+links native, complete-bytecode, and plain-bytecode consumers and verifies
+training, prediction, and model-buffer restoration. Run it with the
+package's test dependencies and `ocamlfind` installed; `system` also
+requires libxgboost ≥ 3.0 visible through `pkg-config`. The `vendored` mode
+forces the bundled fallback even if a system library is available.
 
 The test suite includes:
 - **Layer-parallel parity** — the same training run is reproduced in

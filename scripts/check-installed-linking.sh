@@ -80,12 +80,16 @@ cat > "$scratch/consumer/dune-project" <<'DUNE_PROJECT'
 (name installed_xgboost_probe)
 DUNE_PROJECT
 cat > "$scratch/consumer/dune" <<'DUNE_FILE'
-(executable (name probe) (modes exe byte_complete) (libraries xgboost))
+(executable (name probe) (modes exe byte_complete byte) (libraries xgboost))
 DUNE_FILE
 opam exec -- dune build --root "$scratch/consumer" --profile release \
-  probe.exe probe.bc.exe
+  probe.exe probe.bc.exe probe.bc
 "$scratch/consumer/_build/default/probe.exe"
 "$scratch/consumer/_build/default/probe.bc.exe"
+# Plain bytecode dlopens the C stubs, which in turn need the bundled
+# vendored dlls; point the runtime at the relocated stublibs dir.
+CAML_LD_LIBRARY_PATH="$scratch/relocated-install/lib/stublibs${CAML_LD_LIBRARY_PATH:+:$CAML_LD_LIBRARY_PATH}" \
+  opam exec -- ocamlrun "$scratch/consumer/_build/default/probe.bc"
 if [[ "$mode" == vendored ]]; then
   for executable in probe.exe probe.bc.exe; do
     case "$(uname -s)" in
