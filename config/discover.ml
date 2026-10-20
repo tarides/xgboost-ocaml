@@ -22,9 +22,11 @@
    - libxgboost_vendored.a / libdmlc_vendored.a — on the vendored path,
      copies of the CMake-built static archives; on the fast path, empty
      archives. Declared targets persist between Dune invocations;
-     src/bindings/dune copies and installs them beside the OCaml
-     archives. Link flags use library names and $CAMLORIGIN so installed
-     consumers do not depend on the source tree or installation prefix. *)
+     src/bindings/dune copies them beside the OCaml archives. Link flags
+     use library names and $CAMLORIGIN so installed consumers do not
+     depend on the source tree or installation prefix.
+   - install_files.sexp — the archives src/bindings/dune installs: both
+     on the vendored path, none on the fast path. *)
 
 module C = Configurator.V1
 
@@ -50,6 +52,18 @@ let parse_major v =
 let empty_archive path =
   let oc = open_out_bin path in
   output_string oc "!<arch>\n";
+  close_out oc
+
+(* Write the [files] field of the install stanza in src/bindings/dune:
+   only the archives actually built on the vendored path, so the fast
+   path does not install empty placeholders. *)
+let write_install_files archives =
+  let oc = open_out_bin "install_files.sexp" in
+  output_string oc "(";
+  List.iter
+    (fun a -> Printf.fprintf oc "\n (%s as bindings/%s)" a a)
+    archives;
+  output_string oc ")\n";
   close_out oc
 
 let copy_file ~src ~dst =
@@ -157,15 +171,18 @@ let vendored_conf c =
 
 let () =
   C.main ~name:"xgboost" (fun c ->
-      let cflags, libs =
+      let cflags, libs, installed =
         match system_conf c with
         | Some conf ->
             (* Fast path: the archive targets are unused; create empty
                placeholders so the rule's declared targets all exist. *)
             empty_archive out_xgb;
             empty_archive out_dmlc;
-            (conf.C.Pkg_config.cflags, conf.C.Pkg_config.libs)
-        | None -> vendored_conf c
+            (conf.C.Pkg_config.cflags, conf.C.Pkg_config.libs, [])
+        | None ->
+            let cflags, libs = vendored_conf c in
+            (cflags, libs, [ out_xgb; out_dmlc ])
       in
       C.Flags.write_sexp "c_flags.sexp" (warn_flags @ cflags);
-      C.Flags.write_sexp "c_library_flags.sexp" libs)
+      C.Flags.write_sexp "c_library_flags.sexp" libs;
+      write_install_files installed)

@@ -44,8 +44,13 @@ opam exec -- dune install --root "$scratch/source" \
   --prefix "$scratch/install" xgboost
 bindings="$scratch/install/lib/xgboost/bindings"
 for archive in libxgboost_vendored.a libdmlc_vendored.a; do
-  test -s "$bindings/$archive"
-  ar -t "$bindings/$archive" > /dev/null
+  if [[ "$mode" == vendored ]]; then
+    test -s "$bindings/$archive"
+    ar -t "$bindings/$archive" > /dev/null
+  elif [[ -e "$bindings/$archive" ]]; then
+    echo "System provider unexpectedly installed $archive" >&2
+    exit 1
+  fi
 done
 for suffix in cma cmxa; do
   metadata=$(opam exec -- ocamlobjinfo "$bindings/xgboost_bindings.$suffix")

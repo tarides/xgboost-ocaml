@@ -50,9 +50,13 @@
   (generated_types Types_generated)
   (generated_entry_point C)))
 
+(rule
+ (copy %{project_root}/config/install_files.sexp install_files.sexp))
+
+; The archives are installed only on the vendored path; on the fast path
+; discover.ml writes an empty list and the placeholders stay in _build.
 (install
  (section lib)
  (package xgboost)
  (files
-  (libxgboost_vendored.a as bindings/libxgboost_vendored.a)
-  (libdmlc_vendored.a as bindings/libdmlc_vendored.a)))
+  (include install_files.sexp)))
