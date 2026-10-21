@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # experiment/**: lets an experiment branch run CI even when its PR
+    # conflicts with main (GitHub skips pull_request runs then).
+    branches: [main, 'experiment/**']
   pull_request:
     branches: [main]
 
