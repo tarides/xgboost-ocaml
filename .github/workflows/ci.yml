@@ -121,10 +121,36 @@ jobs:
       - name: Lint opam metadata
         run: opam lint xgboost.opam
 
+      # Vendored mode: keep dune's cache between runs, so the CMake build of
+      # vendor/xgboost (the config/ rule) is restored instead of redone.
+      # Dune tracks the rule's declared inputs (discover.exe, vendor/), not
+      # the C++ compiler or OpenMP it uses, so the key also names the
+      # runner image (ImageOS, e.g. ubuntu24 / macos15). The run id makes
+      # each run save a fresh entry; restore-keys pick the latest one.
+      - name: Compute dune cache key
+        if: matrix.mode == 'vendored'
+        id: dune-cache-key
+        run: echo "prefix=dune-${{ runner.os }}-${{ runner.arch }}-${ImageOS:-unknown}-ocaml${{ matrix.ocaml-version }}-${{ hashFiles('vendor/**', 'config/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore dune cache
+        if: matrix.mode == 'vendored'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/dune
+          key: ${{ steps.dune-cache-key.outputs.prefix }}-${{ github.run_id }}
+          restore-keys: ${{ steps.dune-cache-key.outputs.prefix }}-
+
+      # DUNE_CACHE=enabled also caches user rules (the CMake build is one);
+      # dune's default mode skips them. check-installed-linking.sh disables
+      # the cache itself for its fresh builds.
       - name: Build
+        env:
+          DUNE_CACHE: ${{ matrix.mode == 'vendored' && 'enabled' || 'disabled' }}
         run: opam exec -- dune build -p xgboost -j 4
 
       - name: Run tests
+        env:
+          DUNE_CACHE: ${{ matrix.mode == 'vendored' && 'enabled' || 'disabled' }}
         run: opam exec -- dune runtest -p xgboost -j 4
 
       # Reuse the build above instead of building (and, in vendored mode,
