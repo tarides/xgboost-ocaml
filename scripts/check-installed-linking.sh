@@ -146,9 +146,12 @@ opam exec -- dune build --root "$scratch/consumer" --profile release \
 "$scratch/consumer/_build/default/probe.exe"
 "$scratch/consumer/_build/default/probe.bc.exe"
 # Plain bytecode dlopens the C stubs, which in turn need the bundled
-# vendored dlls; point the runtime at the relocated stublibs dir.
-CAML_LD_LIBRARY_PATH="$scratch/relocated-install/lib/stublibs${CAML_LD_LIBRARY_PATH:+:$CAML_LD_LIBRARY_PATH}" \
-  opam exec -- ocamlrun "$scratch/consumer/_build/default/probe.bc"
+# vendored dlls; point the runtime at the relocated stublibs dir. Use
+# ocamlrun -I rather than CAML_LD_LIBRARY_PATH: on OCaml < 5.5 the ocaml
+# opam package sets CAML_LD_LIBRARY_PATH with `=`, so `opam exec` would
+# overwrite a value set here.
+opam exec -- ocamlrun -I "$scratch/relocated-install/lib/stublibs" \
+  "$scratch/consumer/_build/default/probe.bc"
 if [[ "$mode" == vendored ]]; then
   for executable in probe.exe probe.bc.exe; do
     case "$(uname -s)" in
