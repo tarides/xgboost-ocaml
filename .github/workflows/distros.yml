@@ -1,0 +1,39 @@
+name: Distros
+
+# opam install + an installed consumer inside the ocaml/opam images that
+# opam-repository CI builds on, one job per distro. Most of them have no
+# usable system libxgboost and take the vendored path; Debian 13 and
+# Ubuntu 26.04 install libxgboost-dev as a depext and take the system
+# path. See scripts/check-distro-install.sh.
+
+on:
+  push:
+    branches: ['experiment/**']
+  workflow_dispatch:
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - alpine-3.24
+          - archlinux
+          - centos-10
+          - debian-12
+          - debian-13
+          - fedora-44
+          - opensuse-16.0
+          - opensuse-tumbleweed
+          - ubuntu-24.04
+          - ubuntu-26.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: opam install and installed consumer (${{ matrix.distro }})
+        run: |
+          docker run --rm -v "$PWD:/src:ro" \
+            "ocaml/opam:${{ matrix.distro }}-ocaml-5.5" \
+            sh /src/scripts/check-distro-install.sh
