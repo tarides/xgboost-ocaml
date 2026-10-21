@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Lower the minimum OCaml version from 5.1 to 4.11. The library and its
+  FFI stack were already 4.x-compatible; the only OCaml 5-only use was
+  `Domain.recommended_domain_count` in the build configurator
+  (`config/discover.ml`), which picked the `-j` count for the vendored
+  CMake fallback. It now shells out to `getconf _NPROCESSORS_ONLN`
+  (falling back to `nproc --all`), which is equally OMP_NUM_THREADS-
+  agnostic and compiler-independent. CI now covers 4.11.
+
 ## 0.2.3 (2026-10-25)
 
 - Cap the parallelism of the vendored XGBoost CMake build at 6 jobs.
