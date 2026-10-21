@@ -5,11 +5,15 @@ name: Distros
 # usable system libxgboost and take the vendored path; Debian 13 and
 # Ubuntu 26.04 install libxgboost-dev as a depext and take the system
 # path. See scripts/check-distro-install.sh.
+#
+# Ten jobs that each build XGBoost, so not on every push or PR: run it by
+# hand (Actions > Distros > Run workflow) and once a week, which also
+# catches distro package updates.
 
 on:
-  push:
-    branches: ['experiment/**']
   workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'  # Mondays, 03:17 UTC
 
 jobs:
   install:
