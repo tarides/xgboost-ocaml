@@ -29,7 +29,10 @@ opam update -q
 cp -R /src "$HOME/xgboost"
 rm -rf "$HOME/xgboost/_build"
 cd "$HOME/xgboost"
-opam pin add -n xgboost .
+# --kind=path: pin the files as they are, not a git revision, so a copy
+# of a git worktree (whose .git points outside the container) or of a
+# checkout with uncommitted changes works too.
+opam pin add -n --kind=path xgboost .
 opam install --with-test xgboost
 
 lib=$(opam var lib)

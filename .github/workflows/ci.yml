@@ -2,8 +2,7 @@ name: CI
 
 on:
   push:
-    # experiment/**: run CI on experiment branches without opening a PR.
-    branches: [main, 'experiment/**']
+    branches: [main]
   pull_request:
     branches: [main]
 
