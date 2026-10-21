@@ -57,32 +57,36 @@ else
   opam exec -- dune build --root "$root" --only-packages xgboost \
     --profile release -j "${BUILD_JOBS:-2}" "${targets[@]}"
 fi
-flags="$root/_build/default/config/c_library_flags.sexp"
-if [[ "$mode" == vendored ]]; then
-  grep -F -- '-lxgboost_vendored' "$flags"
-  grep -F -- '-ldmlc_vendored' "$flags"
-else
-  if grep -Fq -- '-lxgboost_vendored' "$flags"; then
-    echo "Expected system native provider, got vendored fallback" >&2
-    exit 1
-  fi
+# config/provider records which xgboost_bindings library was enabled.
+provider_vendored=$(cat "$root/_build/default/config/provider/vendored")
+expected=$([[ "$mode" == vendored ]] && echo true || echo false)
+if [[ "$provider_vendored" != "$expected" ]]; then
+  echo "Expected $mode native provider, config/provider/vendored says $provider_vendored" >&2
+  exit 1
 fi
 
 opam exec -- dune install --root "$root" \
   --prefix "$scratch/install" xgboost
 bindings="$scratch/install/lib/xgboost/bindings"
-for archive in libxgboost_vendored.a libdmlc_vendored.a; do
+# dune installs foreign archives next to the library and their dll
+# companions in lib/stublibs.
+stublibs="$scratch/install/lib/stublibs"
+for name in xgboost_vendored dmlc_vendored; do
   if [[ "$mode" == vendored ]]; then
-    test -s "$bindings/$archive"
-    ar -t "$bindings/$archive" > /dev/null
-  elif [[ -e "$bindings/$archive" ]]; then
-    echo "System provider unexpectedly installed $archive" >&2
+    test -s "$bindings/lib$name.a"
+    ar -t "$bindings/lib$name.a" > /dev/null
+    test -s "$stublibs/dll$name.so"
+  elif [[ -e "$bindings/lib$name.a" || -e "$stublibs/dll$name.so" ]]; then
+    echo "System provider unexpectedly installed vendored $name files" >&2
     exit 1
   fi
 done
 for suffix in cma cmxa; do
   metadata=$(opam exec -- ocamlobjinfo "$bindings/xgboost_bindings.$suffix")
-  printf '%s\n' "$metadata" | grep -F -- '-L$CAMLORIGIN'
+  if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq -- '-Lsrc/bindings'; then
+    echo "Installed link metadata retains a build-relative -L" >&2
+    exit 1
+  fi
   if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq "$root"; then
     echo "Installed link metadata retains the build source path" >&2
     exit 1
