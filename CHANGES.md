@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Fix a segmentation fault in `Booster.save_model_buffer` and
+  `Booster.save_json_config` on musl-based systems (e.g. Alpine Linux).
+  The borrowed C buffer was copied with a per-element ctypes dereference
+  loop, which crashed under musl's allocator (glibc tolerated it). It is
+  now copied in a single bulk `string_from_ptr`, which is also faster.
+
 ## 0.2.2 (2026-10-20)
 
 - Install the vendored XGBoost and dmlc static archives with the bindings
