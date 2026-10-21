@@ -26,7 +26,7 @@
    \nJSON config, and external-memory streaming via a callback iterator.")
  (tags ("xgboost" "machine-learning" "gradient-boosting" "bindings" "ctypes"))
  (depends
-  (ocaml (>= 5.1))
+  (ocaml (>= 4.11))
   (dune-configurator :build)
   (conf-cmake :build)
   (conf-c++ :build)
@@ -45,7 +45,7 @@
    \nupstream Python xgboost package on a fixed grid of workloads.")
  (tags ("xgboost" "benchmark" "bechamel"))
  (depends
-  (ocaml (>= 5.1))
+  (ocaml (>= 4.11))
   xgboost
   (mtime (>= 2.0))
   (bechamel (>= 0.5))

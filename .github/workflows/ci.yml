@@ -12,15 +12,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        ocaml-version: ["5.1", "5.2", "5.3", "5.5"]
+        ocaml-version: ["4.11", "5.1", "5.2", "5.3", "5.5"]
         # Exercise both native-dependency paths of the hybrid build:
         #   system   — link a system libxgboost >= 3.0 (fast path)
         #   vendored — no system lib; compile vendor/xgboost with CMake
         #              (the opam-repo-ci sandbox scenario)
         mode: [system, vendored]
-        # Check installed vendored linking on the oldest supported and
-        # newest compiler, including $CAMLORIGIN expansion on OCaml 5.1.
+        # Check installed vendored linking on the oldest supported (4.11)
+        # and newest compiler, including $CAMLORIGIN expansion. The
+        # in-between versions run the fast path only.
         exclude:
+          - { ocaml-version: "5.1", mode: vendored }
           - { ocaml-version: "5.2", mode: vendored }
           - { ocaml-version: "5.3", mode: vendored }
         include:
