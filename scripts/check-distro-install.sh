@@ -22,6 +22,16 @@ export OPAMYES=1 OPAMCONFIRMLEVEL=unsafe-yes OMP_NUM_THREADS=1
 distro="$ID ${VERSION_ID:-rolling}"
 echo "== $distro, $(opam exec -- ocamlc -version)"
 
+# Arch is rolling: the mirrors drop old package versions, but the image's
+# pacman database is a snapshot, so opam's depext step (pacman -Su) can ask
+# for a pkgconf/cmake build the mirror no longer serves (404). Refresh the
+# database (and keyring) with a full sync+upgrade first, so depexts resolve
+# to the versions the mirror actually has.
+if [ "$ID" = arch ]; then
+  sudo pacman -Sy --noconfirm archlinux-keyring || true
+  sudo pacman -Syu --noconfirm
+fi
+
 # The image's opam-repository is a snapshot; bring it up to date.
 git -C "$HOME/opam-repository" pull -q origin master
 opam update -q
