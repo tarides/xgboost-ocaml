@@ -131,8 +131,10 @@ jobs:
       # vendor/xgboost (the config/ rule) is restored instead of redone.
       # Dune tracks the rule's declared inputs (discover.exe, vendor/), not
       # the C++ compiler or OpenMP it uses, so the key also names the
-      # runner image (ImageOS, e.g. ubuntu24 / macos15). The run id makes
-      # each run save a fresh entry; restore-keys pick the latest one.
+      # runner image (ImageOS, e.g. ubuntu24 / macos15). One entry per key:
+      # on an exact hit actions/cache saves nothing, so the entry neither
+      # multiplies per run nor grows; a change to vendor/ or config/ makes
+      # a new key.
       - name: Compute dune cache key
         if: matrix.mode == 'vendored'
         id: dune-cache-key
@@ -143,8 +145,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/dune
-          key: ${{ steps.dune-cache-key.outputs.prefix }}-${{ github.run_id }}
-          restore-keys: ${{ steps.dune-cache-key.outputs.prefix }}-
+          key: ${{ steps.dune-cache-key.outputs.prefix }}
 
       # DUNE_CACHE=enabled also caches user rules (the CMake build is one);
       # dune's default mode skips them. check-installed-linking.sh disables
