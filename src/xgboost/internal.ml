@@ -58,11 +58,12 @@ let copy_borrowed_float32 ~len ~src =
   dst
 
 (* Copy [len] bytes from a borrowed [const char*] into fresh OCaml [bytes].
- * Used only for save_model_buffer and save_json_config (infrequent
- * per-model calls), so the element loop is fine. *)
+ * Used for save_model_buffer and save_json_config.
+ *
+ * Copy in one bulk [string_from_ptr] (a C memcpy) rather than a
+ * per-element ctypes dereference loop. The element loop segfaulted on
+ * musl-based systems (e.g. Alpine): glibc tolerated it, musl's allocator
+ * did not. The bulk copy is also faster. *)
 let copy_borrowed_bytes ~len ~src =
-  let buf = Bytes.create len in
-  for i = 0 to len - 1 do
-    Bytes.unsafe_set buf i !@(src +@ i)
-  done;
-  buf
+  if len <= 0 then Bytes.create 0
+  else Bytes.unsafe_of_string (string_from_ptr src ~length:len)
