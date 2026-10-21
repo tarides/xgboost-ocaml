@@ -114,6 +114,16 @@ let build_dll c ~out ~archives ~libs =
   in
   die_on_error ("link " ^ out) (C.Process.run c (cc c) args)
 
+(* A valid shared object with no code, for an archive whose objects are
+   already in another dll ([(foreign_archives ...)] needs both files). *)
+let empty_dll c ~out =
+  let args =
+    if is_macos c then
+      [ "-dynamiclib"; "-o"; out; "-install_name"; "@rpath/" ^ out; "-xc"; "/dev/null" ]
+    else [ "-shared"; "-o"; out; "-xc"; "/dev/null" ]
+  in
+  die_on_error ("link empty " ^ out) (C.Process.run c (cc c) args)
+
 (* Build vendored XGBoost as static libraries, copy them to the declared
    archive targets, build their shared companions, and return (cflags,
    libs). [cwd] is this rule's build directory (config/); the vendored sources were copied to
@@ -162,8 +172,10 @@ let vendored_conf c =
     cxx_omp_libs c @ [ "-lm"; "-lpthread"; "-ldl" ]
     @ (if is_bsd c then [ "-lexecinfo" ] else [])
   in
-  (* xgboost's dll also carries dmlc, so it satisfies the stubs' references
-     whatever the load order. *)
+  (* One dll carries both xgboost and dmlc. dmlc's own dll is empty:
+     ocamlrun loads every dll with its symbols globally visible, so a second
+     copy of dmlc would make some references resolve to one copy and others
+     (non-exported state) stay in the other. *)
   build_dll c ~out:out_xgb_dll ~archives:[ out_xgb; out_dmlc ] ~libs;
-  build_dll c ~out:out_dmlc_dll ~archives:[ out_dmlc ] ~libs;
+  empty_dll c ~out:out_dmlc_dll;
   (cflags, libs)

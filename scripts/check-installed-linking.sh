@@ -81,6 +81,35 @@ for name in xgboost_vendored dmlc_vendored; do
     exit 1
   fi
 done
+# Plain bytecode loads three dlls in order: dmlc, xgboost, then the stubs.
+# The stubs dll does not declare the xgboost dll as a dependency, so every
+# XGBoost symbol it uses must come from dllxgboost_vendored.so; and dmlc
+# must be loaded once, from that dll, so dlldmlc_vendored.so stays empty.
+if [[ "$mode" == vendored ]]; then
+  case "$(uname -s)" in
+    Darwin)
+      defined_syms() { nm -gU "$1" | awk '{print $NF}'; }
+      undefined_syms() { nm -gu "$1" | awk '{print $NF}'; } ;;
+    *)
+      defined_syms() { nm -D --defined-only "$1" | awk '{print $NF}'; }
+      undefined_syms() { nm -D --undefined-only "$1" | awk '{print $NF}'; } ;;
+  esac
+  stub_refs=$(undefined_syms "$stublibs/dllxgboost_bindings_stubs.so" | grep 'XGB' | sort -u)
+  if [[ -z "$stub_refs" ]]; then
+    echo "Expected the stubs dll to reference XGBoost symbols" >&2
+    exit 1
+  fi
+  missing=$(comm -23 <(printf '%s\n' "$stub_refs") \
+    <(defined_syms "$stublibs/dllxgboost_vendored.so" | sort -u))
+  if [[ -n "$missing" ]]; then
+    printf 'XGBoost symbols the stubs dll needs but dllxgboost_vendored.so lacks:\n%s\n' "$missing" >&2
+    exit 1
+  fi
+  if defined_syms "$stublibs/dlldmlc_vendored.so" | grep -q 'dmlc'; then
+    echo "dlldmlc_vendored.so carries a second copy of dmlc" >&2
+    exit 1
+  fi
+fi
 for suffix in cma cmxa; do
   metadata=$(opam exec -- ocamlobjinfo "$bindings/xgboost_bindings.$suffix")
   if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq -- '-Lsrc/bindings'; then
@@ -114,8 +143,26 @@ DUNE_FILE
 opam exec -- dune build --root "$scratch/consumer" --profile release \
   probe.exe probe.bc probe.bc.exe
 "$scratch/consumer/_build/default/probe.exe"
-opam exec -- ocamlrun -I "$scratch/relocated-install/lib/stublibs" \
+relocated_stublibs="$scratch/relocated-install/lib/stublibs"
+opam exec -- ocamlrun -I "$relocated_stublibs" \
   "$scratch/consumer/_build/default/probe.bc"
+# The same, finding the dlls through CAML_LD_LIBRARY_PATH as in an opam
+# switch. It is set inside `opam exec`: on OCaml < 5.5 the ocaml package's
+# setenv replaces a value set outside it.
+with_stublibs() {
+  opam exec -- sh -c 'CAML_LD_LIBRARY_PATH="$1${CAML_LD_LIBRARY_PATH:+:$CAML_LD_LIBRARY_PATH}"; export CAML_LD_LIBRARY_PATH; shift; exec "$@"' \
+    sh "$relocated_stublibs" "$@"
+}
+with_stublibs ocamlrun "$scratch/consumer/_build/default/probe.bc"
+# The toplevel loads the dlls itself, through findlib.
+cat > "$scratch/consumer/toplevel.ml" <<'TOPLEVEL'
+#use "topfind";;
+#require "xgboost";;
+let () =
+  let major, minor, patch = Xgboost.version () in
+  Printf.printf "Toplevel loaded xgboost %d.%d.%d\n" major minor patch
+TOPLEVEL
+with_stublibs ocaml "$scratch/consumer/toplevel.ml"
 "$scratch/consumer/_build/default/probe.bc.exe"
 if [[ "$mode" == vendored ]]; then
   for executable in probe.exe probe.bc.exe; do
