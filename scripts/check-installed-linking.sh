@@ -57,32 +57,65 @@ else
   opam exec -- dune build --root "$root" --only-packages xgboost \
     --profile release -j "${BUILD_JOBS:-2}" "${targets[@]}"
 fi
-flags="$root/_build/default/config/c_library_flags.sexp"
-if [[ "$mode" == vendored ]]; then
-  grep -F -- '-lxgboost_vendored' "$flags"
-  grep -F -- '-ldmlc_vendored' "$flags"
-else
-  if grep -Fq -- '-lxgboost_vendored' "$flags"; then
-    echo "Expected system native provider, got vendored fallback" >&2
-    exit 1
-  fi
+# config/provider records which xgboost_bindings library was enabled.
+provider_vendored=$(cat "$root/_build/default/config/provider/vendored")
+expected=$([[ "$mode" == vendored ]] && echo true || echo false)
+if [[ "$provider_vendored" != "$expected" ]]; then
+  echo "Expected $mode native provider, config/provider/vendored says $provider_vendored" >&2
+  exit 1
 fi
 
 opam exec -- dune install --root "$root" \
   --prefix "$scratch/install" xgboost
 bindings="$scratch/install/lib/xgboost/bindings"
-for archive in libxgboost_vendored.a libdmlc_vendored.a; do
+# dune installs foreign archives next to the library and their dll
+# companions in lib/stublibs.
+stublibs="$scratch/install/lib/stublibs"
+for name in xgboost_vendored dmlc_vendored; do
   if [[ "$mode" == vendored ]]; then
-    test -s "$bindings/$archive"
-    ar -t "$bindings/$archive" > /dev/null
-  elif [[ -e "$bindings/$archive" ]]; then
-    echo "System provider unexpectedly installed $archive" >&2
+    test -s "$bindings/lib$name.a"
+    ar -t "$bindings/lib$name.a" > /dev/null
+    test -s "$stublibs/dll$name.so"
+  elif [[ -e "$bindings/lib$name.a" || -e "$stublibs/dll$name.so" ]]; then
+    echo "System provider unexpectedly installed vendored $name files" >&2
     exit 1
   fi
 done
+# Plain bytecode loads three dlls in order: dmlc, xgboost, then the stubs.
+# The stubs dll does not declare the xgboost dll as a dependency, so every
+# XGBoost symbol it uses must come from dllxgboost_vendored.so; and dmlc
+# must be loaded once, from that dll, so dlldmlc_vendored.so stays empty.
+if [[ "$mode" == vendored ]]; then
+  case "$(uname -s)" in
+    Darwin)
+      defined_syms() { nm -gU "$1" | awk '{print $NF}'; }
+      undefined_syms() { nm -gu "$1" | awk '{print $NF}'; } ;;
+    *)
+      defined_syms() { nm -D --defined-only "$1" | awk '{print $NF}'; }
+      undefined_syms() { nm -D --undefined-only "$1" | awk '{print $NF}'; } ;;
+  esac
+  stub_refs=$(undefined_syms "$stublibs/dllxgboost_bindings_stubs.so" | grep 'XGB' | sort -u)
+  if [[ -z "$stub_refs" ]]; then
+    echo "Expected the stubs dll to reference XGBoost symbols" >&2
+    exit 1
+  fi
+  missing=$(comm -23 <(printf '%s\n' "$stub_refs") \
+    <(defined_syms "$stublibs/dllxgboost_vendored.so" | sort -u))
+  if [[ -n "$missing" ]]; then
+    printf 'XGBoost symbols the stubs dll needs but dllxgboost_vendored.so lacks:\n%s\n' "$missing" >&2
+    exit 1
+  fi
+  if defined_syms "$stublibs/dlldmlc_vendored.so" | grep -q 'dmlc'; then
+    echo "dlldmlc_vendored.so carries a second copy of dmlc" >&2
+    exit 1
+  fi
+fi
 for suffix in cma cmxa; do
   metadata=$(opam exec -- ocamlobjinfo "$bindings/xgboost_bindings.$suffix")
-  printf '%s\n' "$metadata" | grep -F -- '-L$CAMLORIGIN'
+  if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq -- '-Lsrc/bindings'; then
+    echo "Installed link metadata retains a build-relative -L" >&2
+    exit 1
+  fi
   if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq "$root"; then
     echo "Installed link metadata retains the build source path" >&2
     exit 1
@@ -110,8 +143,26 @@ DUNE_FILE
 opam exec -- dune build --root "$scratch/consumer" --profile release \
   probe.exe probe.bc probe.bc.exe
 "$scratch/consumer/_build/default/probe.exe"
-opam exec -- ocamlrun -I "$scratch/relocated-install/lib/stublibs" \
+relocated_stublibs="$scratch/relocated-install/lib/stublibs"
+opam exec -- ocamlrun -I "$relocated_stublibs" \
   "$scratch/consumer/_build/default/probe.bc"
+# The same, finding the dlls through CAML_LD_LIBRARY_PATH as in an opam
+# switch. It is set inside `opam exec`: on OCaml < 5.5 the ocaml package's
+# setenv replaces a value set outside it.
+with_stublibs() {
+  opam exec -- sh -c 'CAML_LD_LIBRARY_PATH="$1${CAML_LD_LIBRARY_PATH:+:$CAML_LD_LIBRARY_PATH}"; export CAML_LD_LIBRARY_PATH; shift; exec "$@"' \
+    sh "$relocated_stublibs" "$@"
+}
+with_stublibs ocamlrun "$scratch/consumer/_build/default/probe.bc"
+# The toplevel loads the dlls itself, through findlib.
+cat > "$scratch/consumer/toplevel.ml" <<'TOPLEVEL'
+#use "topfind";;
+#require "xgboost";;
+let () =
+  let major, minor, patch = Xgboost.version () in
+  Printf.printf "Toplevel loaded xgboost %d.%d.%d\n" major minor patch
+TOPLEVEL
+with_stublibs ocaml "$scratch/consumer/toplevel.ml"
 "$scratch/consumer/_build/default/probe.bc.exe"
 if [[ "$mode" == vendored ]]; then
   for executable in probe.exe probe.bc.exe; do
