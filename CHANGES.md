@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Lower the minimum OCaml version from 5.1 to 4.11. The library and its
+  FFI stack were already 4.x-compatible; the only OCaml 5-only use was
+  `Domain.recommended_domain_count` in the build configurator
+  (`config/discover.ml`), which picked the `-j` count for the vendored
+  CMake fallback. It now shells out to `getconf _NPROCESSORS_ONLN`
+  (falling back to `nproc --all`), which is equally OMP_NUM_THREADS-
+  agnostic and compiler-independent. CI now covers 4.11.
 - Fix a segmentation fault in `Booster.save_model_buffer` and
   `Booster.save_json_config` on musl-based systems (e.g. Alpine Linux).
   The borrowed C buffer was copied with a per-element ctypes dereference
