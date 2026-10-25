@@ -154,9 +154,12 @@ with_stublibs() {
     sh "$relocated_stublibs" "$@"
 }
 with_stublibs ocamlrun "$scratch/consumer/_build/default/probe.bc"
-# The toplevel loads the dlls itself, through findlib.
+# The toplevel loads the dlls itself, through findlib. On OCaml 4.x,
+# #thread must load the systhreads stubs before ctypes-foreign's, which
+# need caml_c_thread_unregister; a plain #require does not. Harmless on 5.x.
 cat > "$scratch/consumer/toplevel.ml" <<'TOPLEVEL'
 #use "topfind";;
+#thread;;
 #require "xgboost";;
 let () =
   let major, minor, patch = Xgboost.version () in
