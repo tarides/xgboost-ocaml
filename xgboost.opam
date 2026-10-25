@@ -38,7 +38,7 @@ depends: [
 # The vendored fallback build is Unix-only (cygwin/mingw can't run the
 # CMake path — see config/discover.ml), and there is no system libxgboost
 # on Windows either. Restrict to non-Windows platforms.
-available: [ os != "win32" ]
+available: [ os != "win32" & arch != "riscv64" ]
 depexts: [
   # Fast path: a system libxgboost >= 3.0. opam installs it where the
   # platform packages it; otherwise the build falls back to compiling
