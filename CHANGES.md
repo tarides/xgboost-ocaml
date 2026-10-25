@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.4 (2026-10-25)
 
 - Link `libexecinfo` on the BSDs in the vendored build. XGBoost's bundled
   `dmlc` logging references `backtrace`/`backtrace_symbols`, which are in
