@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.3 (unreleased)
+## 0.2.3 (2026-10-25)
 
 - Cap the parallelism of the vendored XGBoost CMake build at 6 jobs.
   It previously used every available CPU, so on opam-repository CI
