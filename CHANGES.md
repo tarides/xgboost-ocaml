@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Link `libexecinfo` on the BSDs in the vendored build. XGBoost's bundled
+  `dmlc` logging references `backtrace`/`backtrace_symbols`, which are in
+  libc on glibc and in libSystem on macOS but in a separate `libexecinfo`
+  on FreeBSD/OpenBSD/NetBSD/DragonFly. The library linked there but the
+  test executables failed with `undefined symbol: backtrace`; the vendored
+  link flags now add `-lexecinfo` on those platforms.
+- Mark the package unavailable on `riscv64`
+  (`available: ... & arch != "riscv64"`). Its property-test executable
+  crashes at runtime on riscv64 (opam-repository CI, debian-13/riscv64) —
+  a separate ABI issue from the build — so exclude the arch until it is
+  diagnosed.
 - Lower the minimum OCaml version from 5.1 to 4.11. The library and its
   FFI stack were already 4.x-compatible; the only OCaml 5-only use was
   `Domain.recommended_domain_count` in the build configurator

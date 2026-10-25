@@ -97,6 +97,16 @@ let is_macos c =
   | Some ("macosx" | "macos") -> true
   | _ -> false
 
+(* backtrace/backtrace_symbols — used by XGBoost's bundled dmlc logging —
+   are in libc on glibc and in libSystem on macOS, but on the BSDs they
+   live in a separate libexecinfo that must be linked explicitly. *)
+let is_bsd c =
+  let r = C.Process.run c "uname" [ "-s" ] in
+  r.exit_code = 0
+  && List.mem
+       (String.lowercase_ascii (String.trim r.stdout))
+       [ "freebsd"; "openbsd"; "netbsd"; "dragonfly" ]
+
 (* OpenMP and C++ runtime link flags, per platform. On macOS, Homebrew's
    libomp is keg-only, so add its lib dir explicitly. *)
 let cxx_omp_libs c =
@@ -186,6 +196,7 @@ let vendored_conf c =
   let libs =
     [ "-Lsrc/bindings"; "-lxgboost_vendored"; "-ldmlc_vendored" ]
     @ cxx_omp_libs c @ [ "-lm"; "-lpthread"; "-ldl" ]
+    @ (if is_bsd c then [ "-lexecinfo" ] else [])
   in
   (cflags, libs)
 
