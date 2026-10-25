@@ -112,15 +112,26 @@ let cxx_omp_libs c =
 (* Parallelism for the vendored CMake build. Deliberately NOT `nproc`,
    which honours OMP_NUM_THREADS (pinned to 1 in our test/CI env for
    deterministic libxgboost results) and would force a single-threaded,
-   many-minutes build. [recommended_domain_count] reflects the available
-   CPUs (respecting cgroup/affinity limits) and ignores OMP_NUM_THREADS.
+   many-minutes build. [getconf _NPROCESSORS_ONLN] reports the online
+   CPUs and ignores OMP_NUM_THREADS, with [nproc --all] as a fallback
+   (also OMP-agnostic, unlike bare [nproc]). Kept compiler-agnostic so
+   this configurator builds on OCaml 4.x, which has no [Domain].
    Capped at [max_build_jobs]: CI sandboxes (opam-repo CI) report the
    host's CPU count (80+) but not its memory budget, and that many
    parallel cc1plus processes get OOM-killed. *)
 let max_build_jobs = 6
 
-let build_jobs () =
-  max 1 (min max_build_jobs (Domain.recommended_domain_count ()))
+let build_jobs c =
+  let try_cmd prog args =
+    let r = C.Process.run c prog args in
+    if r.exit_code = 0 then int_of_string_opt (String.trim r.stdout) else None
+  in
+  let n =
+    match try_cmd "getconf" [ "_NPROCESSORS_ONLN" ] with
+    | Some n -> n
+    | None -> ( match try_cmd "nproc" [ "--all" ] with Some n -> n | None -> 1 )
+  in
+  max 1 (min max_build_jobs n)
 
 let die_on_error label (r : C.Process.result) =
   if r.exit_code <> 0 then
@@ -148,7 +159,7 @@ let vendored_conf c =
          "-DBUILD_WITH_SHARED_NCCL=OFF" ]);
   die_on_error "cmake build"
     (C.Process.run c cmake
-       [ "--build"; build; "--config"; "Release"; "-j"; string_of_int (build_jobs ()) ]);
+       [ "--build"; build; "--config"; "Release"; "-j"; string_of_int (build_jobs c) ]);
   (* Locate the produced static archives; layout varies — XGBoost sets
      LIBRARY_OUTPUT_DIRECTORY to <src>/lib, while dmlc lands under the
      build dir — so search both roots. *)

@@ -14,7 +14,7 @@ homepage: "https://github.com/tarides/xgboost-ocaml"
 bug-reports: "https://github.com/tarides/xgboost-ocaml/issues"
 depends: [
   "dune" {>= "3.18"}
-  "ocaml" {>= "5.1"}
+  "ocaml" {>= "4.11"}
   "xgboost"
   "mtime" {>= "2.0"}
   "bechamel" {>= "0.5"}
