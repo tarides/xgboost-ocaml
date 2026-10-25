@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.2.3 (unreleased)
 
+- Cap the parallelism of the vendored XGBoost CMake build at 6 jobs.
+  It previously used every available CPU, so on opam-repository CI
+  workers (80+ CPUs reported, with a much smaller memory budget) it
+  started dozens of `cc1plus` processes and was OOM-killed.
 - Fix a segmentation fault in `Booster.save_model_buffer` and
   `Booster.save_json_config` on musl-based systems (e.g. Alpine Linux).
   The borrowed C buffer was copied with a per-element ctypes dereference

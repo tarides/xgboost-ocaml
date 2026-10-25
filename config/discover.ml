@@ -113,8 +113,14 @@ let cxx_omp_libs c =
    which honours OMP_NUM_THREADS (pinned to 1 in our test/CI env for
    deterministic libxgboost results) and would force a single-threaded,
    many-minutes build. [recommended_domain_count] reflects the available
-   CPUs (respecting cgroup/affinity limits) and ignores OMP_NUM_THREADS. *)
-let build_jobs () = max 1 (Domain.recommended_domain_count ())
+   CPUs (respecting cgroup/affinity limits) and ignores OMP_NUM_THREADS.
+   Capped at [max_build_jobs]: CI sandboxes (opam-repo CI) report the
+   host's CPU count (80+) but not its memory budget, and that many
+   parallel cc1plus processes get OOM-killed. *)
+let max_build_jobs = 6
+
+let build_jobs () =
+  max 1 (min max_build_jobs (Domain.recommended_domain_count ()))
 
 let die_on_error label (r : C.Process.result) =
   if r.exit_code <> 0 then
