@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Pin `OMP_NUM_THREADS=1` (and `OMP_THREAD_LIMIT=1`) for the test suite
+  via a `test/dune` `(env …)` stanza. The tests train/predict on tiny
+  matrices, so a single OpenMP thread is faster; more importantly, under
+  opam-repo-ci's `dune … -j <host-cpus>` the parallel test executables
+  each spawned host-cpu-count OMP threads, oversubscribing large CI
+  workers into a ~40-minute thrash (and an occasional spurious
+  property-test failure). Bounding threads per executable removes the
+  blow-up regardless of `-j`, and keeps libxgboost's FP reductions
+  deterministic across workers. (Makes the assumption already documented
+  in `config/discover.ml` actually hold.)
+
 ## 0.2.4 (2026-10-25)
 
 - Link `libexecinfo` on the BSDs in the vendored build. XGBoost's bundled

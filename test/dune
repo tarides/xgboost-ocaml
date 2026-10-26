@@ -1,0 +1,12 @@
+; Pin OpenMP to a single thread for the whole test suite. The test
+; workloads are tiny (dozens of rows), so libxgboost spawning one OMP
+; thread per core is pure overhead; worse, under opam-repo-ci's
+; `dune ... -j <host-cpus>` the test executables run in parallel and
+; each spawns host-cpu-count OMP threads, oversubscribing an 80-core
+; worker into a ~40-minute thrash. One thread is both faster here and
+; keeps libxgboost's FP reductions deterministic across CI workers.
+(env
+ (_
+  (env-vars
+   (OMP_NUM_THREADS 1)
+   (OMP_THREAD_LIMIT 1))))
