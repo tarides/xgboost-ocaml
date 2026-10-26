@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.5 (2026-10-26)
 
 - Pin `OMP_NUM_THREADS=1` (and `OMP_THREAD_LIMIT=1`) for the test suite
   via a `test/dune` `(env …)` stanza. The tests train/predict on tiny
