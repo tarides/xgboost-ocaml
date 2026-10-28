@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.6 (2026-10-28)
+
+- Packaging only (no source or runtime change): split the native
+  libxgboost dependency into a separate `conf-libxgboost` virtual
+  package. `xgboost` now depends on `conf-libxgboost` only where a
+  platform ships `libxgboost >= 3.0` (Debian >= 13, Ubuntu >= 25.10,
+  Homebrew, FreeBSD); elsewhere the vendored build is used as before.
+  `conf-libxgboost` is a generic presence probe
+  (`pkg-config --exists xgboost`), so other libxgboost bindings can
+  reuse it; the `>= 3.0` requirement and the vendored fallback stay in
+  `config/discover.ml`. The opam-repository template for the conf
+  package lives under `packaging/`.
+
 ## 0.2.5 (2026-10-26)
 
 - Pin `OMP_NUM_THREADS=1` (and `OMP_THREAD_LIMIT=1`) for the test suite
