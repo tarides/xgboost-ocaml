@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Packaging only: also depend on `conf-libxgboost` on Linux Mint
+  releases whose base ships `libxgboost >= 3.0`, so they take the
+  system-library fast path instead of compiling the vendored sources.
+  That is LMDE >= 7 (Debian 13 base, `os-family = "debian"`) and
+  mainline Mint with `VERSION_ID >= 23` (Ubuntu 26.04 base,
+  `os-family = "ubuntu"`). Mint 21/22 and LMDE 6 ship libxgboost < 3.0
+  and keep using the vendored build.
+
 ## 0.2.6 (2026-10-28)
 
 - Packaging only (no source or runtime change): split the native
