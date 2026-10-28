@@ -1,7 +1,7 @@
-# Hand-maintained (dune-project sets generate_opam_files false): this
-# package needs a depexts field and conf-cmake/conf-c++ build-deps for
-# the hybrid native dependency, which the dune (package ...) stanza
-# cannot express. Keep in sync with dune-project by hand.
+# Hand-maintained (dune-project sets generate_opam_files false): the
+# hybrid native dependency needs a platform-filtered conf-libxgboost
+# dependency, conf-cmake/conf-c++ build-deps, and a custom available
+# filter, none of which the dune (package ...) stanza can express.
 opam-version: "2.0"
 synopsis: "OCaml bindings for the XGBoost gradient boosting library"
 description: """
@@ -13,7 +13,8 @@ JSON config, and external-memory streaming via a callback iterator.
 
 The native libxgboost dependency is satisfied in one of two ways,
 decided at build time: a system libxgboost >= 3.0 discovered through
-pkg-config (installed via depexts where the platform packages it),
+pkg-config (installed through conf-libxgboost where the platform
+packages it),
 or, failing that, a vendored copy of XGBoost built from source with
 CMake and linked statically (needs no network)."""
 maintainer: ["Cuihtlauac ALVARADO <cuihtlauac@tarides.com>"]
@@ -28,6 +29,21 @@ depends: [
   "dune-configurator" {build}
   "conf-cmake" {build}
   "conf-c++" {build}
+  # Fast path: auto-install a system libxgboost on platforms that ship
+  # one >= 3.0, so pkg-config finds it at build time. conf-libxgboost is
+  # a generic presence probe; the >= 3.0 requirement is enforced by
+  # config/discover.ml, which falls back to compiling the vendored
+  # sources (cmake/g++ from conf-* above) when the system lib is absent
+  # or too old. This filter is deliberately conservative: a platform we
+  # omit merely vendors (harmless), whereas listing one that lacks the
+  # package would hard-fail with no fallback. OpenMP runtime comes with
+  # each path: gcc's libgomp on the vendored build, the system package
+  # (Homebrew formula / FreeBSD port) on the fast path.
+  "conf-libxgboost"
+    {(os-distribution = "debian" & os-version >= "13") |
+     (os-distribution = "ubuntu" & os-version >= "25.10") |
+     (os = "macos" & os-distribution = "homebrew") |
+     os = "freebsd"}
   "ctypes" {>= "0.20"}
   "ctypes-foreign" {>= "0.20"}
   "alcotest" {with-test}
@@ -37,20 +53,10 @@ depends: [
 ]
 # The vendored fallback build is Unix-only (cygwin/mingw can't run the
 # CMake path — see config/discover.ml), and there is no system libxgboost
-# on Windows either. Restrict to non-Windows platforms.
+# on Windows either. Restrict to non-Windows platforms. riscv64 is also
+# excluded: the property-test executable crashes at runtime there (a
+# separate issue from the build), pending diagnosis.
 available: [ os != "win32" & arch != "riscv64" ]
-depexts: [
-  # Fast path: a system libxgboost >= 3.0. opam installs it where the
-  # platform packages it; otherwise the build falls back to compiling
-  # the vendored sources (which needs cmake/g++ from conf-* above, plus
-  # OpenMP below).
-  ["libxgboost-dev"] {os-family = "debian"}
-  ["xgboost"] {os-distribution = "homebrew"}
-  # OpenMP runtime, needed by both the system and vendored libxgboost.
-  ["libgomp1"] {os-family = "debian"}
-  ["libgomp"] {os-distribution = "arch"}
-  ["libomp"] {os-distribution = "homebrew"}
-]
 build: [
   ["dune" "subst"] {dev}
   [
