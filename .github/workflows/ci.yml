@@ -109,8 +109,13 @@ jobs:
       # --no-depexts keeps the two jobs deterministic: system deps are
       # managed explicitly above so opam never pulls a conflicting
       # distro libxgboost underneath us.
+      #
+      # conf-libxgboost is named as a second local target (not yet in
+      # opam-repository — it ships with this package via the open PR). As
+      # a named --deps-only target it resolves the dependency without
+      # being built, so its pkg-config probe never runs here.
       - name: Install OCaml deps
-        run: opam install ./xgboost.opam --deps-only --with-test --no-depexts --yes
+        run: opam install ./xgboost.opam ./packaging/conf-libxgboost.opam --deps-only --with-test --no-depexts --yes
 
       - name: Force vendored discovery
         if: matrix.mode == 'vendored'
