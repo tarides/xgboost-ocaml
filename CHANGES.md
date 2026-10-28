@@ -42,10 +42,19 @@
 - Lower the minimum OCaml version from 5.1 to 4.11. The library and its
   FFI stack were already 4.x-compatible; the only OCaml 5-only use was
   `Domain.recommended_domain_count` in the build configurator
-  (`config/discover.ml`), which picked the `-j` count for the vendored
+  (`config/common/common.ml`), which picked the `-j` count for the vendored
   CMake fallback. It now shells out to `getconf _NPROCESSORS_ONLN`
   (falling back to `nproc --all`), which is equally OMP_NUM_THREADS-
   agnostic and compiler-independent. CI now covers 4.11.
+- Select the native provider by choosing between two definitions of the
+  `xgboost_bindings` library (`src/bindings/system` and
+  `src/bindings/vendored`), enabled from the decision written by
+  `config/provider`. The vendored one bundles the CMake build through
+  dune's `foreign_archives`, which replaces the `-L$CAMLORIGIN` link
+  flags, the generated install list and the system path's placeholder
+  archives. Nothing vendored is built or installed on the system path.
+  Plain bytecode programs on the vendored path load shared builds of the
+  vendored archives from `lib/stublibs`.
 
 ## 0.2.3 (2026-10-25)
 

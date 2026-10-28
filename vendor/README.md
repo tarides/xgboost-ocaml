@@ -37,7 +37,7 @@ branch). The deployed CI may lag behind the newest entries.
 
 Debian's `libxgboost-dev` ships `xgboost.pc`. opam treats Ubuntu as
 `os-family = "debian"`, so on Ubuntu <= 25.04 and Debian 12 the depext
-installs a libxgboost that `discover.ml` then rejects as < 3.0. FreeBSD
+installs a libxgboost that `config/provider/detect.ml` then rejects as < 3.0. FreeBSD
 could use the system path with a depext, provided the port installs
 `xgboost.pc` (not verified).
 

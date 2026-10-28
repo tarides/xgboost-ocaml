@@ -178,7 +178,10 @@ opam install xgboost
    from the sources bundled under [`vendor/xgboost`](vendor/xgboost)
    with CMake and links it statically. This needs a C++17 compiler,
    CMake ≥ 3.18 and OpenMP (all declared as opam build deps), takes a
-   few minutes, and requires no network.
+   few minutes, and requires no network. The static archives are
+   installed with the bindings, plus shared builds of them in
+   `lib/stublibs` for plain bytecode programs; nothing vendored is built
+   or installed when the system library is used.
 
 If your system libxgboost lives outside the standard search paths, add
 it to `PKG_CONFIG_PATH` so the fast path picks it up.
@@ -404,6 +407,27 @@ blocksci-ocaml project):
 `xgboost.bindings` is exposed for consumers who want to skip the
 high-level wrappers, but the public surface is the `Xgboost` module.
 
+**Native provider selection.** `config/provider/` decides between the
+system libxgboost and the vendored build (pkg-config, version ≥ 3.0) and
+writes the answer to two files, `vendored` and `system`. There are two
+definitions of the `xgboost_bindings` library, enabled by
+`(enabled_if %{read:...})` on those files, and only one is ever active:
+
+- `src/bindings/system/` links the system library with pkg-config's
+  flags;
+- `src/bindings/vendored/` bundles the CMake build through dune's
+  `(foreign_archives ...)`, so dune builds, links, installs and locates
+  the archives itself. The CMake rule in `config/dune` has the same
+  condition.
+
+Both compile the same ctypes descriptions from `src/bindings/common/`,
+and everything downstream depends on `xgboost_bindings` without knowing
+which one it gets. This relies on dune 3.15 (`%{read:...}` in a library's
+`enabled_if`) and 3.16 (two libraries with the same name, provided only
+one is enabled). The decision lives in its own directory, with its own
+executable, because dune reads those files while loading rules
+elsewhere.
+
 The streaming iterator does not need a C shim — `Foreign.funptr`
 trampolines from `ctypes-foreign` provide the OCaml↔C callback bridge
 directly.
@@ -457,7 +481,8 @@ xgboost-ocaml/
 ├── BENCH.md            — bench grid + per-phase numbers
 ├── architecture.md     — methodology playbook (synthesised)
 ├── src/
-│   ├── bindings/       — ctypes static stubs (internal)
+│   ├── bindings/       — ctypes static stubs (internal): common/
+│   │                     descriptions, system/ and vendored/ libraries
 │   └── xgboost/        — public OCaml API
 ├── test/
 │   ├── bindings/       — raw-binding parity tests
@@ -470,7 +495,8 @@ xgboost-ocaml/
 │   └── README.md       — grid spec, regime, reproduction
 ├── bin/c_reference/    — pure-C reference harness (perf + check)
 ├── scripts/            — regen-fixtures.sh, run-asan.sh
-└── config/             — dune-configurator for libxgboost discovery
+└── config/             — libxgboost provider decision (provider/) and
+                          vendored CMake build (dune-configurator)
 ```
 
 ## Contributing
@@ -503,6 +529,7 @@ The OCaml bindings are MIT licensed; see [LICENSE](LICENSE). The bundled
 XGBoost source is Apache-2.0 licensed; see
 [vendor/xgboost/LICENSE](vendor/xgboost/LICENSE). A system libxgboost is
 linked dynamically; the vendored fallback installs static XGBoost and
-dmlc archives alongside the bindings. Bundled dependency license files
+dmlc archives alongside the bindings, and shared builds of them in
+`lib/stublibs`. Bundled dependency license files
 are retained in the source tree, including
 [dmlc-core's license](vendor/xgboost/dmlc-core/LICENSE).
