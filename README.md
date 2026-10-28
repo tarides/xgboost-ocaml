@@ -165,7 +165,8 @@ opam install xgboost
 
    ```sh
    # Debian / Ubuntu — note: only recent releases ship >= 3.0
-   #   (Ubuntu 25.10+, Debian trixie/sid). Older ones fall back to (2).
+   #   (Ubuntu 25.10+, Debian trixie/sid, LMDE 7+, Linux Mint on an
+   #   Ubuntu 26.04+ base). Older ones fall back to (2).
    sudo apt install libxgboost-dev
 
    # macOS
