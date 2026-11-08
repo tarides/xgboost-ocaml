@@ -138,6 +138,9 @@ jobs:
 
       # The container runs as the image's opam user (uid 1000), not the
       # runner's (1001), so it needs write access to the cache directory.
+      # The cache is a mount, on another filesystem than the build, and
+      # dune's default hardlink storage then silently stores nothing:
+      # copy instead.
       - name: Build, test and check installed linking (Debian 12, vendored)
         run: |
           mkdir -p "$RUNNER_TEMP/dune-cache"
@@ -146,5 +149,6 @@ jobs:
             -v "$PWD:/src:ro" \
             -v "$RUNNER_TEMP/dune-cache:/dune-cache" \
             -e DUNE_CACHE_ROOT=/dune-cache \
+            -e DUNE_CACHE_STORAGE_MODE=copy \
             "ocaml/opam:debian-12-ocaml-${{ matrix.ocaml-version }}" \
             sh /src/scripts/check-vendored-container.sh

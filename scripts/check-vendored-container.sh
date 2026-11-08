@@ -12,8 +12,10 @@
 # opam installs the dependencies and the depexts they declare (cmake, a
 # C++ compiler, OpenMP, pkg-config) as it would for a user, and nothing
 # forces the vendored path: config/provider has to pick it on its own,
-# which check-installed-linking.sh asserts. Set DUNE_CACHE_ROOT to a
-# mounted directory to keep the CMake build between runs.
+# which check-installed-linking.sh asserts. To keep the CMake build
+# between runs, set DUNE_CACHE_ROOT to a mounted directory and
+# DUNE_CACHE_STORAGE_MODE=copy: the mount is on another filesystem than
+# the build, where dune's default hardlink mode silently stores nothing.
 #
 # Unlike check-distro-install.sh, this doesn't opam install the pinned
 # package: that would build XGBoost a second time for
