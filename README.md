@@ -24,7 +24,8 @@ project fills that gap.
   place prediction.
 - **Comprehensively tested** — alcotest + qcheck suite covering the
   hot path (~50 cases) including a cross-layer fixture-parity
-  oracle, plus a clean run under AddressSanitizer.
+  oracle, plus a clean run under AddressSanitizer's allocator
+  checks.
 - **Benchmarked against C reference and Python xgboost** on a fixed
   grid; see [BENCH.md](BENCH.md) and the table below.
 
@@ -470,9 +471,13 @@ The test suite includes:
 - **Property tests (qcheck)** — predict shape, model-buffer round-
   trip, JSON-config round-trip, determinism, slice consistency,
   sparse/dense equivalence, GC stress, double-free safety.
-- **Memory safety** — ASan run with `LD_PRELOAD=libasan.so` catches
-  use-after-free, double-free, and invalid writes (leak detection is
-  off because OCaml does not fully release its heap at exit).
+- **Memory safety** — ASan run with `LD_PRELOAD=libasan.so`. Nothing
+  is compiled with `-fsanitize=address`, so it checks the allocator
+  and libc calls only: double frees, invalid frees, new/free
+  mismatches, and use-after-free or overflows that go through an
+  intercepted libc function (`memcpy`, `memset`, ...). Direct accesses
+  inside libxgboost or the stubs are not checked. Leak detection is
+  off because OCaml does not fully release its heap at exit.
 
 ## Project layout
 

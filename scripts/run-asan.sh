@@ -1,12 +1,22 @@
 #!/bin/sh
 # Run the OCaml test suite under AddressSanitizer.
 #
-# We don't link the OCaml binaries against ASan (would require
-# rebuilding OCaml with -fsanitize=address). Instead, LD_PRELOAD
-# libasan.so so ASan instruments libxgboost (and our shim if any) at
-# load time. Leak detection is disabled because OCaml programs do not
-# fully release their heap at exit (false positives); use-after-free,
-# double-free, and invalid-write detection remain active.
+# Nothing here is compiled with -fsanitize=address: not the OCaml
+# runtime, not the ctypes stubs, not libxgboost. LD_PRELOAD only installs
+# ASan's runtime, i.e. its malloc/free/new/delete and libc interceptors.
+# That catches:
+#   - double frees, frees of non-heap or foreign pointers, and
+#     malloc/delete (new/free) mismatches;
+#   - use-after-free and out-of-bounds heap accesses, but only when they
+#     go through an intercepted libc function (memcpy, memset, strlen,
+#     ...).
+# Direct loads and stores in uninstrumented code are not checked, so a
+# plain use-after-free or overflow inside libxgboost or the stubs goes
+# unnoticed. Catching those would need libxgboost (e.g. the vendored
+# build) compiled with -fsanitize=address.
+#
+# Leak detection is disabled because OCaml programs do not fully release
+# their heap at exit (false positives).
 #
 # The fixture-parity tests (test/{bindings,xgboost}/check.ml) skip
 # themselves under ASan because libxgboost's hist tree training has

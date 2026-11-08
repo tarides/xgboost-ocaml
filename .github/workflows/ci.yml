@@ -152,7 +152,9 @@ jobs:
         run: bash scripts/check-installed-linking.sh "$GITHUB_WORKSPACE" "${{ matrix.mode }}"
 
       # The pure-C reference and the ASan run both link the system
-      # libxgboost, so they only make sense on the system-mode job.
+      # libxgboost, so they only make sense on the system-mode job. The
+      # ASan run preloads libasan without instrumenting anything: it
+      # checks the allocator and libc calls only (see run-asan.sh).
       - name: Build C reference
         if: runner.os == 'Linux' && matrix.mode == 'system'
         run: make -C bin/c_reference
