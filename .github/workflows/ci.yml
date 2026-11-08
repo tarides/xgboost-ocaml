@@ -113,6 +113,14 @@ jobs:
         if: runner.os == 'Linux' && matrix.ocaml-version == '5.5'
         run: ./scripts/run-asan.sh
 
+      # ocaml.org builds the API docs after a release; catch odoc errors
+      # in xgboost.mli before that.
+      - name: Build documentation
+        if: runner.os == 'Linux' && matrix.ocaml-version == '5.5'
+        run: |
+          opam install odoc --yes
+          opam exec -- dune build -p xgboost @doc
+
   # Vendored path on Debian 12, inside the ocaml/opam image that
   # opam-repository CI uses, with opam installing the depexts itself.
   # See scripts/check-vendored-container.sh.

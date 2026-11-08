@@ -1,15 +1,21 @@
 #!/bin/sh
-# Install xgboost from a checkout the way opam-repository CI does, inside
-# one of its ocaml/opam images, then build and run an installed consumer.
-#
-# Run as the image's opam user, with the checkout mounted read-only at
-# /src:
+# Install xgboost from a checkout the way opam-repository CI does, then
+# build and run an installed consumer. Normally run inside one of
+# opam-repository CI's ocaml/opam images, as the image's opam user, with
+# the checkout mounted read-only at /src:
 #
 #   docker run --rm -v "$PWD:/src:ro" ocaml/opam:alpine-3.24-ocaml-5.5 \
 #     sh /src/scripts/check-distro-install.sh vendored
 #
+# It also runs on a host with an initialised opam switch (Distros' macOS
+# and FreeBSD jobs): set SRC to the checkout.
+#
 # The argument is the native provider this distro must end up with
 # (system or vendored); the script fails if opam took the other path.
+#
+# LOWER_BOUNDS=1 makes opam's solver pick the oldest versions the opam
+# file allows for every dependency, as opam-repository CI's lower-bounds
+# job does.
 #
 # opam installs the depexts it declares (libxgboost-dev where the distro
 # packages it, cmake, a C++ compiler, OpenMP), so each distro takes the
@@ -25,11 +31,27 @@ case "$expected" in
   *) echo "Unknown native provider: $expected" >&2; exit 2 ;;
 esac
 
+src=${SRC:-/src}
+
 export OPAMYES=1 OPAMCONFIRMLEVEL=unsafe-yes OMP_NUM_THREADS=1
 
-. /etc/os-release
-distro="$ID ${VERSION_ID:-rolling}"
-echo "== $distro, $(opam exec -- ocamlc -version)"
+if [ "${LOWER_BOUNDS:-0}" = 1 ]; then
+  # opam-repository CI's lower-bounds criteria: prefer the oldest
+  # versions, i.e. minimise the version lag the default solver maximises.
+  criteria='+removed,+count[version-lag,solution]'
+  export OPAMCRITERIA="$criteria" OPAMFIXUPCRITERIA="$criteria" \
+    OPAMUPGRADECRITERIA="$criteria"
+fi
+
+if [ -r /etc/os-release ]; then
+  . /etc/os-release
+else
+  ID=$(uname -s | tr '[:upper:]' '[:lower:]') VERSION_ID=$(uname -r)
+fi
+distro="$ID ${VERSION_ID:-rolling} $(uname -m)"
+variant=
+if [ "${LOWER_BOUNDS:-0}" = 1 ]; then variant=", lower bounds"; fi
+echo "== $distro, OCaml $(opam exec -- ocamlc -version)$variant"
 
 # Arch is rolling: the mirrors drop old package versions, but the image's
 # pacman database is a snapshot, so opam's depext step (pacman -Su) can ask
@@ -41,11 +63,14 @@ if [ "$ID" = arch ]; then
   sudo pacman -Syu --noconfirm
 fi
 
-# The image's opam-repository is a snapshot; bring it up to date.
-git -C "$HOME/opam-repository" pull -q origin master
-opam update -q
+# An ocaml/opam image's opam-repository is a snapshot; bring it up to
+# date. (A host switch uses opam.ocaml.org, already current.)
+if [ -d "$HOME/opam-repository/.git" ]; then
+  git -C "$HOME/opam-repository" pull -q origin master
+  opam update -q
+fi
 
-cp -R /src "$HOME/xgboost"
+cp -R "$src" "$HOME/xgboost"
 rm -rf "$HOME/xgboost/_build"
 cd "$HOME/xgboost"
 # --kind=path: pin the files as they are, not a git revision, so a copy
@@ -53,6 +78,11 @@ cd "$HOME/xgboost"
 # checkout with uncommitted changes works too.
 opam pin add -n --kind=path xgboost .
 opam install --with-test xgboost
+if [ "${LOWER_BOUNDS:-0}" = 1 ]; then
+  echo "== dependency versions picked:"
+  opam list --installed --columns=name,version \
+    dune dune-configurator ctypes ctypes-foreign alcotest qcheck-core qcheck-alcotest
+fi
 
 lib=$(opam var lib)
 if [ -s "$lib/xgboost/bindings/libxgboost_vendored.a" ]; then
@@ -91,4 +121,4 @@ let () =
 TOPLEVEL
 opam exec -- ocaml "$consumer/toplevel.ml"
 
-echo "== $distro: installed consumer passed ($provider)"
+echo "== $distro$variant: installed consumer passed ($provider)"
