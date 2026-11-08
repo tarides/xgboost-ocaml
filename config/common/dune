@@ -1,0 +1,6 @@
+; Helpers shared by the provider decision (../provider) and the vendored
+; build (..). A library rather than shared modules, so that the two
+; executables can live in different directories (see ../provider/dune).
+(library
+ (name xgboost_config)
+ (libraries dune-configurator))

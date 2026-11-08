@@ -1,0 +1,59 @@
+; Vendored XGBoost (fallback): the static archives and their shared
+; companions built by config/discover.ml, bundled through
+; [(foreign_archives ...)], so dune links, installs and locates them.
+; One of two [xgboost_bindings] libraries; see ../dune. The ctypes
+; descriptions are shared through ../common.
+
+(copy_files# (files ../common/*.ml))
+
+(rule
+ (enabled_if %{read:../../../config/provider/vendored})
+ (action (copy %{project_root}/config/c_flags.sexp c_flags.sexp)))
+
+(rule
+ (enabled_if %{read:../../../config/provider/vendored})
+ (action (copy %{project_root}/config/c_library_flags.sexp c_library_flags.sexp)))
+
+(rule
+ (enabled_if %{read:../../../config/provider/vendored})
+ (action (copy %{project_root}/config/libxgboost_vendored.a libxgboost_vendored.a)))
+
+(rule
+ (enabled_if %{read:../../../config/provider/vendored})
+ (action (copy %{project_root}/config/libdmlc_vendored.a libdmlc_vendored.a)))
+
+(rule
+ (enabled_if %{read:../../../config/provider/vendored})
+ (action (copy %{project_root}/config/dllxgboost_vendored.so dllxgboost_vendored.so)))
+
+(rule
+ (enabled_if %{read:../../../config/provider/vendored})
+ (action (copy %{project_root}/config/dlldmlc_vendored.so dlldmlc_vendored.so)))
+
+(library
+ (name xgboost_bindings)
+ (public_name xgboost.bindings)
+ (enabled_if %{read:../../../config/provider/vendored})
+ (wrapped true)
+ (libraries ctypes)
+ (foreign_archives xgboost_vendored dmlc_vendored)
+ (flags (:standard -w -9-27-32-33-37))
+ (ctypes
+  (external_library_name xgboost)
+  ; Use the [vendored] resolver rather than [pkg_config] so we can inject
+  ; the warning suppressions ctypes' generated stubs require: XGBoost
+  ; declares its borrowed-output pointers as `const T**`, but ctypes can
+  ; only emit non-const `T**` — the cast is benign and we silence the
+  ; corresponding -Wincompatible-pointer-types warning at the C compiler.
+  (build_flags_resolver
+   (vendored
+    (c_flags (:include c_flags.sexp))
+    (c_library_flags (:include c_library_flags.sexp))))
+  (headers (preamble "#include <xgboost/c_api.h>"))
+  (type_description (instance Types) (functor Type_description))
+  (function_description
+   (concurrency sequential)
+   (instance Functions)
+   (functor Function_description))
+  (generated_types Types_generated)
+  (generated_entry_point C)))

@@ -1,0 +1,39 @@
+; System libxgboost (fast path): the pkg-config flags written by
+; config/provider/detect.ml.
+; One of two [xgboost_bindings] libraries; see ../dune. The ctypes
+; descriptions are shared through ../common.
+
+(copy_files# (files ../common/*.ml))
+
+(rule
+ (copy %{project_root}/config/provider/c_flags.sexp c_flags.sexp))
+
+(rule
+ (copy %{project_root}/config/provider/c_library_flags.sexp c_library_flags.sexp))
+
+(library
+ (name xgboost_bindings)
+ (public_name xgboost.bindings)
+ (enabled_if %{read:../../../config/provider/system})
+ (wrapped true)
+ (libraries ctypes)
+ (flags (:standard -w -9-27-32-33-37))
+ (ctypes
+  (external_library_name xgboost)
+  ; Use the [vendored] resolver rather than [pkg_config] so we can inject
+  ; the warning suppressions ctypes' generated stubs require: XGBoost
+  ; declares its borrowed-output pointers as `const T**`, but ctypes can
+  ; only emit non-const `T**` — the cast is benign and we silence the
+  ; corresponding -Wincompatible-pointer-types warning at the C compiler.
+  (build_flags_resolver
+   (vendored
+    (c_flags (:include c_flags.sexp))
+    (c_library_flags (:include c_library_flags.sexp))))
+  (headers (preamble "#include <xgboost/c_api.h>"))
+  (type_description (instance Types) (functor Type_description))
+  (function_description
+   (concurrency sequential)
+   (instance Functions)
+   (functor Function_description))
+  (generated_types Types_generated)
+  (generated_entry_point C)))

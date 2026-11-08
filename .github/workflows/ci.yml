@@ -11,21 +11,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        ocaml-version: ["4.11", "5.1", "5.2", "5.3", "5.5"]
-        # Exercise both native-dependency paths of the hybrid build:
-        #   system   — link a system libxgboost >= 3.0 (fast path)
-        #   vendored — no system lib; compile vendor/xgboost with CMake
-        #              (the opam-repo-ci sandbox scenario)
-        mode: [system, vendored]
-        # Check installed vendored linking on the oldest supported (4.11)
-        # and newest compiler, including $CAMLORIGIN expansion. The
-        # in-between versions run the fast path only.
-        exclude:
-          - { ocaml-version: "5.1", mode: vendored }
-          - { ocaml-version: "5.2", mode: vendored }
-          - { ocaml-version: "5.3", mode: vendored }
+        # Each job runs where opam would really take its path:
+        #   system   — ubuntu-26.04 and Homebrew package libxgboost >= 3.0,
+        #              which opam installs through conf-libxgboost's depext.
+        #   vendored — ubuntu-24.04 is outside xgboost.opam's
+        #              conf-libxgboost filter and only packages libxgboost
+        #              < 3.0, so opam (and opam-repo-ci) builds
+        #              vendor/xgboost with CMake there, with no system lib.
+        # Vendored runs on the oldest supported (4.11) and newest compiler;
+        # the in-between versions run the system path only. macOS vendored
+        # stands in for MacPorts and --no-depexts users (see below).
         include:
+          - { os: ubuntu-26.04, ocaml-version: "4.11", mode: system }
+          - { os: ubuntu-26.04, ocaml-version: "5.1", mode: system }
+          - { os: ubuntu-26.04, ocaml-version: "5.2", mode: system }
+          - { os: ubuntu-26.04, ocaml-version: "5.3", mode: system }
+          - { os: ubuntu-26.04, ocaml-version: "5.5", mode: system }
+          - { os: ubuntu-24.04, ocaml-version: "4.11", mode: vendored }
+          - { os: ubuntu-24.04, ocaml-version: "5.5", mode: vendored }
           - { os: macos-latest, ocaml-version: "5.3", mode: system }
           - { os: macos-latest, ocaml-version: "5.3", mode: vendored }
 
@@ -51,72 +54,50 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pkg-config cmake g++ libgomp1
 
-      - name: Install libxgboost 3.0 (system mode only)
+      # The distro package, as conf-libxgboost's depext installs it on
+      # Ubuntu >= 25.10 (3.0.4 on 26.04). The exact 3.0.0 minimum is
+      # covered by the Distros workflow's Debian 13 job.
+      - name: Install system libxgboost (system mode only)
         if: runner.os == 'Linux' && matrix.mode == 'system'
-        run: |
-          # Ubuntu's packaged libxgboost is older than the >=3.0 entry
-          # points we bind. Install 3.0.0 from the upstream Python wheel
-          # (which carries a prebuilt libxgboost.so) and take the headers
-          # from the matching source tag.
-          sudo apt-get install -y python3-pip patchelf
-          python3 -m pip install --user --break-system-packages xgboost==3.0.0
-          XGBOOST_PY=$(python3 -c 'import os, xgboost; print(os.path.dirname(xgboost.__file__))')
-          sudo install -m 0644 "$XGBOOST_PY/lib/libxgboost.so" /usr/lib/x86_64-linux-gnu/
-          # The wheel was built with auditwheel: libxgboost.so DT_NEEDEDs
-          # a hash-name-mangled libgomp-HASH.so.1.0.0 bundled alongside
-          # it. Re-point the dependency at the system libgomp so we don't
-          # need to ship the mangled file. Discover the mangled name
-          # first since the hash is build-specific.
-          MANGLED_GOMP=$(patchelf --print-needed /usr/lib/x86_64-linux-gnu/libxgboost.so | grep -E '^libgomp-' || true)
-          if [ -n "$MANGLED_GOMP" ]; then
-            sudo patchelf --replace-needed "$MANGLED_GOMP" libgomp.so.1 \
-              /usr/lib/x86_64-linux-gnu/libxgboost.so
-          fi
-          # Headers from the matching upstream tag
-          git clone --depth 1 --branch v3.0.0 https://github.com/dmlc/xgboost.git /tmp/xgboost-src
-          sudo cp -r /tmp/xgboost-src/include/xgboost /usr/include/
-          # pkg-config file so config/discover.ml finds it
-          sudo tee /usr/lib/x86_64-linux-gnu/pkgconfig/xgboost.pc > /dev/null <<'EOF'
-          prefix=/usr
-          exec_prefix=${prefix}
-          libdir=${exec_prefix}/lib/x86_64-linux-gnu
-          includedir=${prefix}/include
-
-          Name: xgboost
-          Description: XGBoost gradient boosting library
-          Version: 3.0.0
-          Libs: -L${libdir} -lxgboost
-          Cflags: -I${includedir}
-          EOF
-          sudo ldconfig
-          # Sanity check: confirm the symbol we need is present
-          nm -D /usr/lib/x86_64-linux-gnu/libxgboost.so | grep -E ' T XGBoosterTrainOneIter$' \
-            || (echo "libxgboost.so missing XGBoosterTrainOneIter" && exit 1)
+        run: sudo apt-get install -y libxgboost-dev
 
       - name: Install macOS build toolchain
         if: runner.os == 'macOS'
         run: brew install cmake pkg-config libomp
 
+      # On Homebrew, xgboost.opam depends on conf-libxgboost, whose build
+      # probes `pkg-config --exists xgboost`, and opam's depext always
+      # installs brew xgboost, so Homebrew users never vendor. The vendored
+      # job installs it anyway to get through the deps install, then hides
+      # it with an empty PKG_CONFIG_LIBDIR (below) to exercise the macOS
+      # vendored build (-force_load, keg-only libomp) that MacPorts and
+      # --no-depexts users get. No macOS runner comes without Homebrew.
       - name: Install macOS system XGBoost
-        if: runner.os == 'macOS' && matrix.mode == 'system'
+        if: runner.os == 'macOS'
         run: brew install xgboost
 
+      # OCaml 4.11's runtime declares primitives as `value (*)()`, which
+      # C23 (GCC 15's default, on ubuntu-26.04) reads as taking no
+      # arguments, so the compiler build fails in interp.c. Build it as
+      # gnu11. Also set on the 24.04 vendored job (where GCC 13 doesn't need
+      # it): the vendored build links its shared companions with OCaml's
+      # recorded c_compiler, and this keeps a compiler-with-flags case
+      # covered.
       - name: Set up OCaml ${{ matrix.ocaml-version }}
         uses: ocaml/setup-ocaml@v3
+        env:
+          CC: ${{ matrix.ocaml-version == '4.11' && runner.os == 'Linux' && 'gcc -std=gnu11' || '' }}
         with:
           ocaml-compiler: ${{ matrix.ocaml-version }}
 
-      # --no-depexts keeps the two jobs deterministic: system deps are
-      # managed explicitly above so opam never pulls a conflicting
-      # distro libxgboost underneath us.
-      #
-      # conf-libxgboost is named as a second local target (not yet in
-      # opam-repository — it ships with this package via the open PR). As
-      # a named --deps-only target it resolves the dependency without
-      # being built, so its pkg-config probe never runs here.
+      # --no-depexts: system deps are installed explicitly above, matching
+      # what the depexts would install, so each job's native setup is
+      # fixed by this file rather than by opam's solver.
       - name: Install OCaml deps
-        run: opam install ./xgboost.opam ./packaging/conf-libxgboost.opam --deps-only --with-test --no-depexts --yes
+        run: opam install ./xgboost.opam --deps-only --with-test --no-depexts --yes
 
+      # Hides brew xgboost on macOS; on ubuntu-24.04 there is nothing to
+      # hide, and this guards against a runner image that ships a .pc.
       - name: Force vendored discovery
         if: matrix.mode == 'vendored'
         run: |
@@ -127,10 +108,37 @@ jobs:
       - name: Lint opam metadata
         run: opam lint xgboost.opam
 
+      # Vendored mode: keep dune's cache between runs, so the CMake build of
+      # vendor/xgboost (the config/ rule) is restored instead of redone.
+      # Dune tracks the rule's declared inputs (discover.exe, vendor/), not
+      # the C++ compiler or OpenMP it uses, so the key also names the
+      # runner image (ImageOS, e.g. ubuntu24 / macos15). One entry per key:
+      # on an exact hit actions/cache saves nothing, so the entry neither
+      # multiplies per run nor grows; a change to vendor/ or config/ makes
+      # a new key.
+      - name: Compute dune cache key
+        if: matrix.mode == 'vendored'
+        id: dune-cache-key
+        run: echo "prefix=dune-${{ runner.os }}-${{ runner.arch }}-${ImageOS:-unknown}-ocaml${{ matrix.ocaml-version }}-${{ hashFiles('vendor/**', 'config/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore dune cache
+        if: matrix.mode == 'vendored'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/dune
+          key: ${{ steps.dune-cache-key.outputs.prefix }}
+
+      # DUNE_CACHE=enabled also caches user rules (the CMake build is one);
+      # dune's default mode skips them. check-installed-linking.sh disables
+      # the cache itself for its fresh builds.
       - name: Build
+        env:
+          DUNE_CACHE: ${{ matrix.mode == 'vendored' && 'enabled' || 'disabled' }}
         run: opam exec -- dune build -p xgboost -j 4
 
       - name: Run tests
+        env:
+          DUNE_CACHE: ${{ matrix.mode == 'vendored' && 'enabled' || 'disabled' }}
         run: opam exec -- dune runtest -p xgboost -j 4
 
       # Reuse the build above instead of building (and, in vendored mode,

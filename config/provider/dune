@@ -1,0 +1,18 @@
+; Native provider decision: a system libxgboost >= 3.0 through pkg-config,
+; or the vendored build. Writes [vendored] and [system] ("true"/"false"),
+; read by the [enabled_if] fields of ../dune and of the two
+; [xgboost_bindings] libraries in src/bindings/{system,vendored}. Dune reads
+; them while loading rules in those directories, so the decision lives in
+; its own directory with its own executable: depending on anything built
+; in config/ would make loading config/ depend on itself.
+(executable
+ (name detect)
+ (libraries xgboost_config dune-configurator))
+
+(rule
+ (targets vendored system c_flags.sexp c_library_flags.sexp)
+ (deps
+  (env_var PKG_CONFIG_PATH)
+  (env_var PKG_CONFIG_LIBDIR))
+ (action
+  (run ./detect.exe)))

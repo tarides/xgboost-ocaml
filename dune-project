@@ -5,7 +5,7 @@
 ; opam files are hand-maintained (not generated): the xgboost package
 ; needs a platform-filtered conf-libxgboost dependency and a custom
 ; available filter for the hybrid native dependency (see
-; config/discover.ml), which the (package ...) stanza cannot express.
+; config/provider/detect.ml), which the (package ...) stanza cannot express.
 ; Keep the stanzas below in sync with the .opam files by hand.
 (generate_opam_files false)
 

@@ -9,6 +9,18 @@
   mainline Mint with `VERSION_ID >= 23` (Ubuntu 26.04 base,
   `os-family = "ubuntu"`). Mint 21/22 and LMDE 6 ship libxgboost < 3.0
   and keep using the vendored build.
+- Select the native provider by choosing between two definitions of the
+  `xgboost_bindings` library (`src/bindings/system` and
+  `src/bindings/vendored`), enabled from the decision written by
+  `config/provider`. The vendored one bundles the CMake build through
+  dune's `foreign_archives`, which replaces the `-L$CAMLORIGIN` link
+  flags, the generated install list and the system path's placeholder
+  archives. Nothing vendored is built or installed on the system path.
+  Plain bytecode programs on the vendored path load shared builds of the
+  vendored archives from `lib/stublibs`.
+  The system-or-vendored decision, including the `>= 3.0` check, moves
+  from `config/discover.ml` to `config/provider/detect.ml`;
+  `config/discover.ml` now only builds the vendored archives.
 
 ## 0.2.6 (2026-10-28)
 
