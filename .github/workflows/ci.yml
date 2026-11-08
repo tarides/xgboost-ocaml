@@ -155,3 +155,11 @@ jobs:
             -e DUNE_CACHE_STORAGE_MODE=copy \
             "ocaml/opam:debian-12-ocaml-${{ matrix.ocaml-version }}" \
             sh /src/scripts/check-vendored-container.sh
+
+      # Dune writes its cache files readable by their owner only, the
+      # container's opam user, so actions/cache (running as the runner's
+      # user) couldn't pack them and saved nothing. Give them back, even
+      # when the step above failed.
+      - name: Hand the dune cache back to the runner's user
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/dune-cache"
