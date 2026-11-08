@@ -121,8 +121,10 @@ if [[ "$mode" == vendored ]]; then
 fi
 for suffix in cma cmxa; do
   metadata=$(opam exec -- ocamlobjinfo "$bindings/xgboost_bindings.$suffix")
-  if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq -- '-Lsrc/bindings'; then
-    echo "Installed link metadata retains a build-relative -L" >&2
+  # Any -L that isn't absolute would resolve against the consumer's
+  # working directory.
+  if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Eq -- '(^|[[:space:]])-L[^/[:space:]]'; then
+    echo "Installed link metadata retains a relative -L" >&2
     exit 1
   fi
   if printf '%s\n' "$metadata" | grep '^Extra C' | grep -Fq "$root"; then

@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's previous run; runs on main finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-and-test:
     strategy:
@@ -44,7 +52,7 @@ jobs:
       OMP_NUM_THREADS: "1"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # cmake/g++/libgomp are needed everywhere: the conf-cmake/conf-c++
       # build-deps check for them, and the vendored path builds with them.
@@ -105,8 +113,9 @@ jobs:
           echo 'PKG_CONFIG_PATH=' >> "$GITHUB_ENV"
           echo "PKG_CONFIG_LIBDIR=$RUNNER_TEMP/empty-pkgconfig" >> "$GITHUB_ENV"
 
+      # Also the conf-libxgboost template published to opam-repository.
       - name: Lint opam metadata
-        run: opam lint xgboost.opam
+        run: opam lint xgboost.opam packaging/conf-libxgboost.opam
 
       # Vendored mode: keep dune's cache between runs, so the CMake build of
       # vendor/xgboost (the config/ rule) is restored instead of redone.
@@ -123,7 +132,7 @@ jobs:
 
       - name: Restore dune cache
         if: matrix.mode == 'vendored'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/dune
           key: ${{ steps.dune-cache-key.outputs.prefix }}
