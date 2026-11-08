@@ -21,7 +21,7 @@ opam lint xgboost.opam
 
 `check-installed-linking.sh` builds a fresh source copy from scratch (dune cache disabled on purpose), installs it, deletes the copy, relocates the install, then builds and runs native, bytecode and `byte_complete` consumers. `vendored` forces the bundled fallback even if a system lib exists; `system` needs libxgboost >= 3.0 visible to pkg-config. A fresh vendored build compiles XGBoost with CMake, which takes several minutes (up to ~20). `REUSE_BUILD=1` installs from the checkout's existing `dune build -p xgboost` output instead (CI does this); it keeps the caller's `DUNE_CACHE`, because switching it from enabled to disabled makes dune re-run the CMake build. `RUN_TESTS=0` skips `@runtest` in the fresh build.
 
-CI (`ci.yml`) runs OCaml 5.5 and 4.11 on the system path (ubuntu-latest, macos-latest; macOS 4.11 on `macos-26-intel`, since 4.11 predates arm64 macOS) and on the vendored path in `ocaml/opam:debian-12-ocaml-<v>` via `scripts/check-vendored-container.sh`. The weekly `distros.yml` does a full `opam install` in ten opam-repository CI images and asserts each one's provider.
+CI (`ci.yml`) runs OCaml 5.5 and 4.11 on the system path (ubuntu-latest, macos-latest; macOS uses 4.12 instead of 4.11, which predates arm64 macOS and whose empty-archive `ar` workaround fails with macOS 26's `ar`) and on the vendored path in `ocaml/opam:debian-12-ocaml-<v>` via `scripts/check-vendored-container.sh`. The weekly `distros.yml` does a full `opam install` in ten opam-repository CI images and asserts each one's provider.
 
 Running a single test: test executables are `test/bindings/check`, `test/xgboost/{check,props,test_eval_cv}`. Use alcotest filtering, for example:
 

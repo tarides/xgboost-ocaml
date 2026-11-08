@@ -15,8 +15,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The same two OCaml versions everywhere: the latest release (5.5) and
-  # the declared minimum (4.11, `ocaml >= 4.11` in xgboost.opam). Each job
+  # Two OCaml versions on each platform: the latest release (5.5) and the
+  # declared minimum (4.11, `ocaml >= 4.11` in xgboost.opam), except on
+  # macOS where the oldest usable one is 4.12 (see below). Each job
   # runs where opam would really take its native path:
   #   system   — ubuntu-latest and Homebrew package libxgboost >= 3.0,
   #              which opam installs through conf-libxgboost's depext.
@@ -31,10 +32,12 @@ jobs:
           - { os: ubuntu-latest, ocaml-version: "5.5" }
           - { os: ubuntu-latest, ocaml-version: "4.11" }
           - { os: macos-latest, ocaml-version: "5.5" }
-          # macos-latest is arm64, and OCaml 4.11 predates arm64 macOS
-          # (ocaml-base-compiler.4.11.2 is unavailable there; support came
-          # in 4.12). Same macOS release on GitHub's Intel runner.
-          - { os: macos-26-intel, ocaml-version: "4.11" }
+          # Not 4.11: it predates arm64 macOS (ocaml-base-compiler.4.11.2 is
+          # unavailable there), and even on Intel its empty-archive
+          # workaround (`ar d x.a /dev/null`) is rejected by macOS 26's ar,
+          # so packages with empty libraries (stdlib-shims) don't build.
+          # 4.12 supports arm64 and doesn't call ar for empty archives.
+          - { os: macos-latest, ocaml-version: "4.12" }
 
     runs-on: ${{ matrix.os }}
 
