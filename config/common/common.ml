@@ -106,8 +106,19 @@ let die_on_error label (r : C.Process.result) =
     C.die "%s failed (exit %d)\nstdout:\n%s\nstderr:\n%s" label r.exit_code
       r.stdout r.stderr
 
-(* The C/C++ compiler driver used to link the shared companions. *)
-let cc c = Option.value (C.ocaml_config_var c "c_compiler") ~default:"cc"
+(* The C/C++ compiler driver used to link the shared companions, as a
+   program and its leading flags. OCaml records c_compiler as given to its
+   configure, which may carry flags (e.g. "gcc -std=gnu11"), so it is split
+   on whitespace rather than run as one program name. *)
+let cc c =
+  let words s = List.filter (( <> ) "") (String.split_on_char ' ' (String.trim s)) in
+  match words (Option.value (C.ocaml_config_var c "c_compiler") ~default:"") with
+  | prog :: flags -> (prog, flags)
+  | [] -> ("cc", [])
+
+let run_cc c args =
+  let prog, flags = cc c in
+  C.Process.run c prog (flags @ args)
 
 (* Link [archives] whole into a self-contained shared object [out], pulling
    in [libs] (C++/OpenMP runtime, etc.), for the plain-bytecode load path.
@@ -123,7 +134,7 @@ let build_dll c ~out ~archives ~libs =
       ("-shared" :: "-o" :: out :: "-Wl,--whole-archive" :: archives)
       @ ("-Wl,--no-whole-archive" :: libs)
   in
-  die_on_error ("link " ^ out) (C.Process.run c (cc c) args)
+  die_on_error ("link " ^ out) (run_cc c args)
 
 (* A valid shared object with no code, for an archive whose objects are
    already in another dll ([(foreign_archives ...)] needs both files). *)
@@ -133,7 +144,7 @@ let empty_dll c ~out =
       [ "-dynamiclib"; "-o"; out; "-install_name"; "@rpath/" ^ out; "-xc"; "/dev/null" ]
     else [ "-shared"; "-o"; out; "-xc"; "/dev/null" ]
   in
-  die_on_error ("link empty " ^ out) (C.Process.run c (cc c) args)
+  die_on_error ("link empty " ^ out) (run_cc c args)
 
 (* Build vendored XGBoost as static libraries, copy them to the declared
    archive targets, build their shared companions, and return (cflags,
