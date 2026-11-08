@@ -32,9 +32,9 @@ depends: [
   # Fast path: auto-install a system libxgboost on platforms that ship
   # one >= 3.0, so pkg-config finds it at build time. conf-libxgboost is
   # a generic presence probe; the >= 3.0 requirement is enforced by
-  # config/discover.ml, which falls back to compiling the vendored
-  # sources (cmake/g++ from conf-* above) when the system lib is absent
-  # or too old. This filter is deliberately conservative: a platform we
+  # config/provider/detect.ml, which falls back to compiling the vendored
+  # sources (cmake/g++ from conf-* above, built by config/discover.ml)
+  # when the system lib is absent or too old. This filter is deliberately conservative: a platform we
   # omit merely vendors (harmless), whereas listing one that lacks the
   # package would hard-fail with no fallback. OpenMP runtime comes with
   # each path: gcc's libgomp on the vendored build, the system package
@@ -52,7 +52,7 @@ depends: [
   "odoc" {with-doc}
 ]
 # The vendored fallback build is Unix-only (cygwin/mingw can't run the
-# CMake path — see config/discover.ml), and there is no system libxgboost
+# CMake path built by config/discover.ml), and there is no system libxgboost
 # on Windows either. Restrict to non-Windows platforms. riscv64 is also
 # excluded: the property-test executable crashes at runtime there (a
 # separate issue from the build), pending diagnosis.

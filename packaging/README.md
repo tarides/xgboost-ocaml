@@ -26,7 +26,7 @@ How it pairs with `xgboost.opam`:
   would hard-fail with no fallback.
 - `conf-libxgboost` itself is a generic, version-agnostic presence probe
   (`pkg-config --exists`). The `>= 3.0` requirement is enforced at build
-  time by `config/discover.ml`, which falls back to the vendored build
+  time by `config/provider/detect.ml`, which falls back to the vendored build
   when the system library is absent or too old.
 
 When releasing, publish/refresh `conf-libxgboost` in opam-repository
