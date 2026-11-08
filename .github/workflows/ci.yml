@@ -75,7 +75,7 @@ jobs:
           # Headers from the matching upstream tag
           git clone --depth 1 --branch v3.0.0 https://github.com/dmlc/xgboost.git /tmp/xgboost-src
           sudo cp -r /tmp/xgboost-src/include/xgboost /usr/include/
-          # pkg-config file so config/discover.ml finds it
+          # pkg-config file so config/provider/detect.ml finds it
           sudo tee /usr/lib/x86_64-linux-gnu/pkgconfig/xgboost.pc > /dev/null <<'EOF'
           prefix=/usr
           exec_prefix=${prefix}
@@ -97,8 +97,12 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install cmake pkg-config libomp
 
+      # Installed in both modes, as opam's depext would be on Homebrew:
+      # xgboost.opam depends on conf-libxgboost there, whose build probes
+      # `pkg-config --exists xgboost`. The vendored job still takes the
+      # vendored path, through the empty PKG_CONFIG_LIBDIR set below.
       - name: Install macOS system XGBoost
-        if: runner.os == 'macOS' && matrix.mode == 'system'
+        if: runner.os == 'macOS'
         run: brew install xgboost
 
       - name: Set up OCaml ${{ matrix.ocaml-version }}
@@ -109,13 +113,8 @@ jobs:
       # --no-depexts keeps the two jobs deterministic: system deps are
       # managed explicitly above so opam never pulls a conflicting
       # distro libxgboost underneath us.
-      #
-      # conf-libxgboost is named as a second local target (not yet in
-      # opam-repository — it ships with this package via the open PR). As
-      # a named --deps-only target it resolves the dependency without
-      # being built, so its pkg-config probe never runs here.
       - name: Install OCaml deps
-        run: opam install ./xgboost.opam ./packaging/conf-libxgboost.opam --deps-only --with-test --no-depexts --yes
+        run: opam install ./xgboost.opam --deps-only --with-test --no-depexts --yes
 
       - name: Force vendored discovery
         if: matrix.mode == 'vendored'
