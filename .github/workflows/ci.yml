@@ -101,8 +101,14 @@ jobs:
         if: runner.os == 'macOS' && matrix.mode == 'system'
         run: brew install xgboost
 
+      # OCaml 4.11's runtime declares primitives as `value (*)()`, which
+      # C23 (GCC 15's default, on ubuntu-latest = 26.04) reads as taking no
+      # arguments, so the compiler build fails in interp.c. Build it as
+      # gnu11. Other versions keep the default compiler.
       - name: Set up OCaml ${{ matrix.ocaml-version }}
         uses: ocaml/setup-ocaml@v3
+        env:
+          CC: ${{ matrix.ocaml-version == '4.11' && runner.os == 'Linux' && 'gcc -std=gnu11' || '' }}
         with:
           ocaml-compiler: ${{ matrix.ocaml-version }}
 
