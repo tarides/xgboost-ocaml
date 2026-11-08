@@ -6,7 +6,10 @@
 # /src:
 #
 #   docker run --rm -v "$PWD:/src:ro" ocaml/opam:alpine-3.24-ocaml-5.5 \
-#     sh /src/scripts/check-distro-install.sh
+#     sh /src/scripts/check-distro-install.sh vendored
+#
+# The argument is the native provider this distro must end up with
+# (system or vendored); the script fails if opam took the other path.
 #
 # opam installs the depexts it declares (libxgboost-dev where the distro
 # packages it, cmake, a C++ compiler, OpenMP), so each distro takes the
@@ -15,6 +18,12 @@
 # through the switch's own stublibs), byte_complete and in the toplevel.
 
 set -eu
+
+expected=${1:?Usage: check-distro-install.sh system|vendored}
+case "$expected" in
+  system|vendored) ;;
+  *) echo "Unknown native provider: $expected" >&2; exit 2 ;;
+esac
 
 export OPAMYES=1 OPAMCONFIRMLEVEL=unsafe-yes OMP_NUM_THREADS=1
 
@@ -52,6 +61,12 @@ else
   provider=system
 fi
 echo "== installed with the $provider provider"
+# A broken conf-libxgboost filter, a failed depext or a distro dropping
+# xgboost.pc would otherwise vendor silently and still pass.
+if [ "$provider" != "$expected" ]; then
+  echo "== expected the $expected provider on $distro" >&2
+  exit 1
+fi
 
 consumer="$HOME/consumer"
 mkdir -p "$consumer"

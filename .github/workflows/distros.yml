@@ -4,7 +4,8 @@ name: Distros
 # opam-repository CI builds on, one job per distro. Most of them have no
 # usable system libxgboost and take the vendored path; Debian 13 and
 # Ubuntu 26.04 install libxgboost-dev as a depext and take the system
-# path. See scripts/check-distro-install.sh.
+# path. Each job names the provider it must end up with, and fails if
+# opam took the other one. See scripts/check-distro-install.sh.
 #
 # Ten jobs that each build XGBoost, so not on every push or PR: run it by
 # hand (Actions > Distros > Run workflow) and once a week, which also
@@ -20,24 +21,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro:
-          - alpine-3.24
-          - archlinux
-          - centos-10
-          - debian-12
-          - debian-13
-          - fedora-44
-          - opensuse-16.0
-          - opensuse-tumbleweed
-          - ubuntu-24.04
-          - ubuntu-26.04
+        include:
+          - { distro: alpine-3.24, provider: vendored }
+          - { distro: archlinux, provider: vendored }
+          - { distro: centos-10, provider: vendored }
+          - { distro: debian-12, provider: vendored }
+          # libxgboost-dev 3.0.0: the only job on the exact minimum.
+          - { distro: debian-13, provider: system }
+          - { distro: fedora-44, provider: vendored }
+          - { distro: opensuse-16.0, provider: vendored }
+          - { distro: opensuse-tumbleweed, provider: vendored }
+          - { distro: ubuntu-24.04, provider: vendored }
+          - { distro: ubuntu-26.04, provider: system }
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      - name: opam install and installed consumer (${{ matrix.distro }})
+      - name: opam install and installed consumer (${{ matrix.distro }}, ${{ matrix.provider }})
         run: |
           docker run --rm -v "$PWD:/src:ro" \
             "ocaml/opam:${{ matrix.distro }}-ocaml-5.5" \
-            sh /src/scripts/check-distro-install.sh
+            sh /src/scripts/check-distro-install.sh ${{ matrix.provider }}
