@@ -21,7 +21,7 @@ opam lint xgboost.opam
 
 `check-installed-linking.sh` builds a fresh source copy from scratch (dune cache disabled on purpose), installs it, deletes the copy, relocates the install, then builds and runs native, bytecode and `byte_complete` consumers. `vendored` forces the bundled fallback even if a system lib exists; `system` needs libxgboost >= 3.0 visible to pkg-config. A fresh vendored build compiles XGBoost with CMake, which takes several minutes (up to ~20). `REUSE_BUILD=1` installs from the checkout's existing `dune build -p xgboost` output instead (CI does this); it keeps the caller's `DUNE_CACHE`, because switching it from enabled to disabled makes dune re-run the CMake build. `RUN_TESTS=0` skips `@runtest` in the fresh build.
 
-CI (`ci.yml`) runs OCaml 5.5 and 4.11 on the system path (ubuntu-latest, macos-latest; macOS uses 4.12 instead of 4.11, which predates arm64 macOS and whose empty-archive `ar` workaround fails with macOS 26's `ar`) and on the vendored path in `ocaml/opam:debian-12-ocaml-<v>` via `scripts/check-vendored-container.sh`. The weekly `distros.yml` does a full `opam install` in ten opam-repository CI images and asserts each one's provider.
+CI (`ci.yml`) runs OCaml 5.5 and 4.11 on the system path (ubuntu-latest, macos-latest; macOS uses 4.12 instead of 4.11, which predates arm64 macOS and whose empty-archive `ar` workaround fails with macOS 26's `ar`) and on the vendored path in `ocaml/opam:debian-12-ocaml-<v>` via `scripts/check-vendored-container.sh`. The weekly `distros.yml` does a full `opam install` in the other opam-repository CI images (Debian 12 and Ubuntu 26.04 are left to `ci.yml`) and asserts each one's provider.
 
 Running a single test: test executables are `test/bindings/check`, `test/xgboost/{check,props,test_eval_cv}`. Use alcotest filtering, for example:
 
@@ -36,14 +36,14 @@ Without `OMP_NUM_THREADS=1`, a few qcheck properties (slice consistency, model-b
 
 ## Releasing to opam-repository
 
-Before opening a PR to ocaml/opam-repository (a new `xgboost` release, or a `conf-libxgboost` update from `packaging/`), run the Distros workflow on the exact commit being released and wait for it to be green on all ten images:
+Before opening a PR to ocaml/opam-repository (a new `xgboost` release, or a `conf-libxgboost` update from `packaging/`), run the Distros workflow on the exact commit being released and wait for it to be green on every image:
 
 ```sh
 gh workflow run distros.yml --ref <release tag or branch>
 gh run watch "$(gh run list -w Distros -L 1 --json databaseId -q '.[0].databaseId')"
 ```
 
-It reproduces what opam-repository CI does (a real `opam install --with-test` with depexts, in its own `ocaml/opam` images) and fails if a distro takes the wrong native provider, which `ci.yml` can't catch. Its weekly run on `main` doesn't count: it has to be the released commit. Link the green run in the opam-repository PR description. If an image fails for a reason unrelated to xgboost (e.g. a stale rolling-distro mirror), say so in the PR rather than skipping the check.
+It reproduces what opam-repository CI does (a real `opam install --with-test` with depexts, in its own `ocaml/opam` images) and fails if a distro takes the wrong native provider. Debian 12 and Ubuntu 26.04 aren't in it because `ci.yml` covers them, so `ci.yml` must be green on the same commit too. Their weekly or per-push runs on `main` don't count: it has to be the released commit. Link both green runs in the opam-repository PR description. If an image fails for a reason unrelated to xgboost (e.g. a stale rolling-distro mirror), say so in the PR rather than skipping the check.
 
 ## Architecture
 

@@ -2,14 +2,18 @@ name: Distros
 
 # opam install + an installed consumer inside the ocaml/opam images that
 # opam-repository CI builds on, one job per distro. Most of them have no
-# usable system libxgboost and take the vendored path; Debian 13 and
-# Ubuntu 26.04 install libxgboost-dev as a depext and take the system
-# path. Each job names the provider it must end up with, and fails if
-# opam took the other one. See scripts/check-distro-install.sh.
+# usable system libxgboost and take the vendored path; Debian 13 installs
+# libxgboost-dev as a depext and takes the system path. Each job names
+# the provider it must end up with, and fails if opam took the other
+# one. See scripts/check-distro-install.sh.
 #
-# Ten jobs that each build XGBoost, so not on every push or PR: run it by
-# hand (Actions > Distros > Run workflow) and once a week, which also
-# catches distro package updates.
+# Debian 12 and Ubuntu 26.04 are left out: ci.yml already covers them on
+# every PR (vendored-debian in ocaml/opam:debian-12, system on
+# ubuntu-latest = 26.04), with the same OCaml and libxgboost.
+#
+# Every job builds XGBoost, so not on every push or PR: run it by hand
+# (Actions > Distros > Run workflow) and once a week, which also catches
+# distro package updates.
 
 on:
   workflow_dispatch:
@@ -33,14 +37,12 @@ jobs:
           - { distro: alpine-3.24, provider: vendored }
           - { distro: archlinux, provider: vendored }
           - { distro: centos-10, provider: vendored }
-          - { distro: debian-12, provider: vendored }
           # libxgboost-dev 3.0.0: the only job on the exact minimum.
           - { distro: debian-13, provider: system }
           - { distro: fedora-44, provider: vendored }
           - { distro: opensuse-16.0, provider: vendored }
           - { distro: opensuse-tumbleweed, provider: vendored }
           - { distro: ubuntu-24.04, provider: vendored }
-          - { distro: ubuntu-26.04, provider: system }
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
