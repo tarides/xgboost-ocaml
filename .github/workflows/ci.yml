@@ -19,8 +19,8 @@ jobs:
         #              (the opam-repo-ci sandbox scenario)
         mode: [system, vendored]
         # Check installed vendored linking on the oldest supported (4.11)
-        # and newest compiler, including $CAMLORIGIN expansion. The
-        # in-between versions run the fast path only.
+        # and newest compiler. The in-between versions run the fast path
+        # only.
         exclude:
           - { ocaml-version: "5.1", mode: vendored }
           - { ocaml-version: "5.2", mode: vendored }
@@ -50,6 +50,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config cmake g++ libgomp1
+
+      # Installed on the vendored job as opam's depext would be: on Ubuntu
+      # >= 25.10 (ubuntu-latest is 26.04) xgboost.opam depends on
+      # conf-libxgboost, whose build probes `pkg-config --exists xgboost`.
+      # The job still takes the vendored path, through the empty
+      # PKG_CONFIG_LIBDIR set below. The system job installs its own 3.0.0.
+      - name: Install distro libxgboost (vendored mode only)
+        if: runner.os == 'Linux' && matrix.mode == 'vendored'
+        run: sudo apt-get install -y libxgboost-dev
 
       - name: Install libxgboost 3.0 (system mode only)
         if: runner.os == 'Linux' && matrix.mode == 'system'
@@ -105,8 +114,14 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install xgboost
 
+      # OCaml 4.11's runtime declares primitives as `value (*)()`, which
+      # C23 (GCC 15's default, on ubuntu-26.04) reads as taking no
+      # arguments, so the compiler build fails in interp.c. Build it as
+      # gnu11. Other versions keep the default compiler.
       - name: Set up OCaml ${{ matrix.ocaml-version }}
         uses: ocaml/setup-ocaml@v3
+        env:
+          CC: ${{ matrix.ocaml-version == '4.11' && runner.os == 'Linux' && 'gcc -std=gnu11' || '' }}
         with:
           ocaml-compiler: ${{ matrix.ocaml-version }}
 
