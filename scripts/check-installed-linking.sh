@@ -11,8 +11,13 @@ esac
 # REUSE_BUILD=1 installs from the checkout's existing _build (as left by
 # `dune build -p xgboost`) instead of building a fresh copy, then hides
 # that _build while consumers link. CI uses it to avoid building the
-# vendored XGBoost a second time. RUN_TESTS=0 skips @runtest in the
-# fresh build; REUSE_BUILD implies it.
+# vendored XGBoost a second time. That only works if the environment
+# dune sees matches the earlier build: switching DUNE_CACHE from enabled
+# to disabled makes dune re-run user rules (the CMake build among them),
+# and a different PKG_CONFIG_LIBDIR re-runs config/provider. So in this
+# mode the caller's DUNE_CACHE and, when set, its pkg-config variables
+# are kept. RUN_TESTS=0 skips @runtest in the fresh build; REUSE_BUILD
+# implies it.
 reuse_build=${REUSE_BUILD:-0}
 run_tests=${RUN_TESTS:-1}
 
@@ -35,13 +40,17 @@ else
     config src vendor test | tar -x -C "$root"
 fi
 cp "$checkout/scripts/installed_linking_probe.ml" "$scratch/consumer/probe.ml"
-export DUNE_CACHE=disabled
+# The fresh build disables dune's cache on purpose (see CLAUDE.md); a
+# reused build keeps the caller's setting (see REUSE_BUILD above).
+if [[ "$reuse_build" != 1 ]]; then export DUNE_CACHE=disabled; fi
 export OMP_NUM_THREADS=1
 export OMP_THREAD_LIMIT=1
 
 if [[ "$mode" == vendored ]]; then
+  if [[ "$reuse_build" != 1 || -z "${PKG_CONFIG_LIBDIR:-}" ]]; then
+    export PKG_CONFIG_LIBDIR="$scratch/empty-pkgconfig"
+  fi
   export PKG_CONFIG_PATH=
-  export PKG_CONFIG_LIBDIR="$scratch/empty-pkgconfig"
 else
   pkg-config --atleast-version=3.0 xgboost
   pkg-config --modversion xgboost
@@ -140,6 +149,8 @@ DUNE_PROJECT
 cat > "$scratch/consumer/dune" <<'DUNE_FILE'
 (executable (name probe) (modes exe byte byte_complete) (libraries xgboost))
 DUNE_FILE
+# The consumer is built without dune's cache either way.
+export DUNE_CACHE=disabled
 opam exec -- dune build --root "$scratch/consumer" --profile release \
   probe.exe probe.bc probe.bc.exe
 "$scratch/consumer/_build/default/probe.exe"
