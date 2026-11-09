@@ -1,0 +1,78 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+OCaml (>= 4.11) ctypes bindings to libxgboost >= 3.0 (CPU only; GPU and distributed/Rabit are out of scope). Two opam packages: `xgboost` (library) and `xgboost-bench` (benchmarks, needs bechamel/mtime).
+
+## Commands
+
+```sh
+opam install . --deps-only --with-test
+opam exec -- dune build                      # whole tree, incl. bench
+opam exec -- dune build -p xgboost           # library only (what CI does)
+opam exec -- dune runtest                    # alcotest + qcheck, ~10 s
+OMP_NUM_THREADS=1 opam exec -- dune runtest  # deterministic, as in CI
+./scripts/run-asan.sh                        # test suite with LD_PRELOAD=libasan.so
+make -C bin/c_reference [check]              # pure-C reference (Makefile, not dune)
+./scripts/regen-fixtures.sh                  # regenerate test/fixtures/check_predictions.txt
+bash scripts/check-installed-linking.sh "$PWD" vendored|system   # install, drop _build, link consumers
+opam lint xgboost.opam
+```
+
+`check-installed-linking.sh` builds a fresh source copy from scratch (dune cache disabled on purpose), installs it, deletes the copy, relocates the install, then builds and runs native, bytecode and `byte_complete` consumers. `vendored` forces the bundled fallback even if a system lib exists; `system` needs libxgboost >= 3.0 visible to pkg-config. A fresh vendored build compiles XGBoost with CMake, which takes several minutes (up to ~20). `REUSE_BUILD=1` installs from the checkout's existing `dune build -p xgboost` output instead (CI does this); it keeps the caller's `DUNE_CACHE`, because switching it from enabled to disabled makes dune re-run the CMake build. `RUN_TESTS=0` skips `@runtest` in the fresh build.
+
+CI (`ci.yml`) runs OCaml 5.5 and 4.11 on the system path (ubuntu-latest, macos-latest; macOS uses 4.12 instead of 4.11, which predates arm64 macOS and whose empty-archive `ar` workaround fails with macOS 26's `ar`) and on the vendored path in `ocaml/opam` images (Debian 12 on 5.5 and 4.11, Alpine 3.24 on amd64 and arm64) via `scripts/check-vendored-container.sh`. The weekly `distros.yml` does a full `opam install` (with depexts) and asserts the provider on the platforms opam-repository CI uses: its other `ocaml/opam` images (Debian 12, Alpine 3.24 and Ubuntu 26.04 are left to `ci.yml`), arm64, macOS/Homebrew and FreeBSD, plus OCaml 4.11/4.14 and a lower-bounds job (`LOWER_BOUNDS=1`).
+
+Running a single test: test executables are `test/bindings/check`, `test/xgboost/{check,props,keep_alive,test_eval_cv}`. Use alcotest filtering, for example:
+
+```sh
+opam exec -- dune exec test/xgboost/check.exe -- test smoke 7   # group "smoke", case index 7 (csr)
+opam exec -- dune exec test/xgboost/props.exe
+```
+
+Without `OMP_NUM_THREADS=1`, a few qcheck properties (slice consistency, model-buffer round-trip) can drift by about 1e-4 because hist's OpenMP reduction order isn't deterministic. That is FP noise in libxgboost, not a binding bug.
+
+`xgboost.opam` / `xgboost-bench.opam` are hand-maintained (`(generate_opam_files false)` in `dune-project`): the platform-filtered `conf-libxgboost` dependency and the `available` filter can't be expressed in dune's `(package ...)` stanza. Edit the `.opam` files and keep the `dune-project` stanzas in sync by hand.
+
+## Releasing to opam-repository
+
+Before opening a PR to ocaml/opam-repository (a new `xgboost` release, or a `conf-libxgboost` update from `packaging/`), run the Distros workflow on the exact commit being released and wait for it to be green on every image:
+
+```sh
+gh workflow run distros.yml --ref <release tag or branch>
+gh run watch "$(gh run list -w Distros -L 1 --json databaseId -q '.[0].databaseId')"
+```
+
+It reproduces what opam-repository CI does (a real `opam install --with-test` with depexts, in its own `ocaml/opam` images) and fails if a distro takes the wrong native provider. Debian 12, Alpine 3.24 and Ubuntu 26.04 aren't in it because `ci.yml` covers them, so `ci.yml` must be green on the same commit too. Their weekly or per-push runs on `main` don't count: it has to be the released commit. Link both green runs in the opam-repository PR description. If an image fails for a reason unrelated to xgboost (e.g. a stale rolling-distro mirror), say so in the PR rather than skipping the check.
+
+## Architecture
+
+Three layers, called "layer B" and "layer C" in the code comments:
+
+1. **libxgboost (C ABI)**: provided in one of two ways, chosen at build time by `config/provider/detect.ml` (dune-configurator). The system path uses pkg-config to find a system libxgboost >= 3.0. On opam, `xgboost.opam` depends on `conf-libxgboost` (template in `packaging/`) only on platforms that package one (Debian >= 13, Ubuntu >= 25.10, LMDE 7+/recent Mint, Homebrew, FreeBSD), so its depext installs it there. The fallback, `config/discover.ml`, builds the pruned, vendored sources in `vendor/xgboost` (v3.0.4, with a local CMake patch; see `vendor/README.md`) with CMake as static archives. Most opam CI distros take the fallback; `vendor/README.md` has the per-distro table. See "Native packaging" below.
+2. **Layer B, `src/bindings/` (`xgboost.bindings`, module `Xgboost_bindings.C.Functions`)**: static stubs generated by dune's ctypes plugin from `src/bindings/common/function_description.ml`, built by one of two library definitions (`src/bindings/system/`, `src/bindings/vendored/`). Uses the `vendored` build-flags resolver so it can inject `-Wno-incompatible-pointer-types` (ctypes emits `T**` where the header has `const T**`). Only bind C functions that exist in **every** supported libxgboost (>= 3.0, including 3.1+). Binding a symbol that was removed upstream breaks stub compilation; see 0.2.1 in `CHANGES.md` (`XGDMatrixCreateFromCSREx`).
+3. **Layer C, `src/xgboost/` (public `Xgboost` module)**: `xgboost.mli` is the single public interface. `xgboost.ml` re-exports the per-module files (`dmatrix.ml`, `booster.ml`, `streaming.ml`, `eval.ml`, `cv.ml`, `error.ml`). `internal.ml` holds the shared helpers: `xgb_check` (rc != 0 → `Xgboost_error (Xgb_error (XGBGetLastError ()))`), out-param readers, and copying borrowed `const float*` results into OCaml-owned Bigarrays. `array_interface.ml` builds the numpy `__array_interface__` JSON strings used by the modern entry points (`XGDMatrixCreateFromDense`/`CSR`, `XGBoosterPredictFromDense`, proxy DMatrix for streaming).
+
+### Native packaging (vendored path)
+
+The in-tree build and tests can pass while installed consumers fail to link. Only `check-installed-linking.sh` catches that. Before 0.2.2, absolute `_build` archive paths ended up in the installed `.cmxa`.
+
+- Two definitions of the `xgboost_bindings` library (public name `xgboost.bindings`) are mutually exclusive through `enabled_if %{read:.../config/provider/{system,vendored}}` (uses dune 3.15's `%{read}` in a library's `enabled_if` and 3.16's same-name libraries, but needs dune >= 3.23: older dune rejects the relative `%{read:../../../config/provider/...}` path as "outside the workspace"; the lower-bounds Distros job caught that). `config/provider/detect.ml` writes those `true`/`false` files plus the system path's pkg-config flags. It lives in its own directory because dune reads the files while loading other directories' rules.
+- `src/bindings/system/` links the system lib with the pkg-config flags. `src/bindings/vendored/` uses `(foreign_archives xgboost_vendored dmlc_vendored)`, so dune links, installs and locates the archives itself. The CMake rule in `config/dune` has the same `enabled_if`, so nothing vendored is built or installed on the system path.
+- The vendored path also builds `dllxgboost_vendored.so` (both archives whole-archived; `-force_load` on macOS) and an empty `dlldmlc_vendored.so` for plain bytecode, installed in `lib/stublibs`. dmlc must be loaded only once; `check-installed-linking.sh` checks this with `nm`. The `.so`s are linked with OCaml's recorded `c_compiler`, which may carry flags (`config/common/common.ml` splits it).
+- Never put absolute or build-directory paths in the link flags.
+
+### Lifetime/FFI invariants (the main source of subtle bugs)
+
+- Handles are records finalised with `Gc.finalise_last`. Explicit `free` must stay idempotent and safe if the finaliser runs later.
+- Anything a C call uses must stay reachable until the call, and any copy of a result it borrows, is done: the `Booster.t`/`DMatrix.t` records (only their raw handle reaches C, and their finaliser frees the libxgboost object) and every Bigarray whose address is passed, including through JSON array-interface strings. End the function with `Internal.keep_alive x` (after the copy), or store `x` in the resulting record (DMatrix pins its source arrays). Don't use `ignore (Sys.opaque_identity x)`: OCaml < 4.13 deletes it (`Iopaque` counted as pure), which freed `predict_dense`'s input on 4.11 (#27). `keep_alive` is a never-inlined function, so it works on every version.
+- `test/xgboost/keep_alive.ml` checks this deterministically: the value is only reachable through the call, Bigarrays poison themselves when finalised, and `Gc.Memprof` forces a full GC at every allocation during the call (skipped on OCaml 5.0–5.2, which lack memprof). A new function that passes a handle or an array to C should get a case there.
+- `Booster.t` permanently pins its `cache` DMatrices and pins `dtrain` for the duration of `update_one_iter`/`boost_one_iter`, because libxgboost doesn't own those snapshots.
+- Streaming (`streaming.ml`) uses `Foreign.funptr` trampolines from ctypes-foreign (no C shim). Batches are pinned in a closure-captured ref while libxgboost may still use them.
+- Borrowed prediction pointers are invalidated by the next call on the same booster. `predict` copies eagerly; only `Booster.Unsafe.predict_borrowed` skips the copy.
+
+## Testing structure
+
+- **Cross-layer parity**: `bin/c_reference/check.c`, `test/bindings/check.ml` and `test/xgboost/check.ml` reproduce the same training run (setup in `test/fixtures/check_setup.md`, `nthread=1`). All three must match `test/fixtures/check_predictions.txt` to 1e-5. These parity tests skip themselves under ASan. The ASan run only preloads libasan (nothing is instrumented), so it checks the allocator and libc calls, not direct accesses inside libxgboost. If libxgboost's training changes, regenerate the fixture and explain the diff in the commit.
+- `test/xgboost/props.ml` holds the qcheck properties. Free boosters/DMatrices explicitly inside properties so GC pressure doesn't distort results.
+- Adding a binding, per README/`architecture.md`: add it to `function_description.ml`, wrap it in layer C and expose it in `xgboost.mli`, add an alcotest case plus a qcheck property, and extend `bench/` if it's on a hot path. Bench methodology is in `bench/README.md`; per-phase numbers are in `BENCH.md`.

@@ -15,30 +15,29 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build-and-test:
+  # Two OCaml versions on each platform: the latest release (5.5) and the
+  # declared minimum (4.11, `ocaml >= 4.11` in xgboost.opam), except on
+  # macOS where the oldest usable one is 4.12 (see below). Each job
+  # runs where opam would really take its native path:
+  #   system   — ubuntu-latest and Homebrew package libxgboost >= 3.0,
+  #              which opam installs through conf-libxgboost's depext.
+  #   vendored — Debian 12 packages only libxgboost < 3.0 and is outside
+  #              conf-libxgboost's filter, so opam builds vendor/xgboost
+  #              with CMake there, with no system lib (job below).
+  system:
     strategy:
       fail-fast: false
       matrix:
-        # Each job runs where opam would really take its path:
-        #   system   — ubuntu-26.04 and Homebrew package libxgboost >= 3.0,
-        #              which opam installs through conf-libxgboost's depext.
-        #   vendored — ubuntu-24.04 is outside xgboost.opam's
-        #              conf-libxgboost filter and only packages libxgboost
-        #              < 3.0, so opam (and opam-repo-ci) builds
-        #              vendor/xgboost with CMake there, with no system lib.
-        # Vendored runs on the oldest supported (4.11) and newest compiler;
-        # the in-between versions run the system path only. macOS vendored
-        # stands in for MacPorts and --no-depexts users (see below).
         include:
-          - { os: ubuntu-26.04, ocaml-version: "4.11", mode: system }
-          - { os: ubuntu-26.04, ocaml-version: "5.1", mode: system }
-          - { os: ubuntu-26.04, ocaml-version: "5.2", mode: system }
-          - { os: ubuntu-26.04, ocaml-version: "5.3", mode: system }
-          - { os: ubuntu-26.04, ocaml-version: "5.5", mode: system }
-          - { os: ubuntu-24.04, ocaml-version: "4.11", mode: vendored }
-          - { os: ubuntu-24.04, ocaml-version: "5.5", mode: vendored }
-          - { os: macos-latest, ocaml-version: "5.3", mode: system }
-          - { os: macos-latest, ocaml-version: "5.3", mode: vendored }
+          - { os: ubuntu-latest, ocaml-version: "5.5" }
+          - { os: ubuntu-latest, ocaml-version: "4.11" }
+          - { os: macos-latest, ocaml-version: "5.5" }
+          # Not 4.11: it predates arm64 macOS (ocaml-base-compiler.4.11.2 is
+          # unavailable there), and even on Intel its empty-archive
+          # workaround (`ar d x.a /dev/null`) is rejected by macOS 26's ar,
+          # so packages with empty libraries (stdlib-shims) don't build.
+          # 4.12 supports arm64 and doesn't call ar for empty archives.
+          - { os: macos-latest, ocaml-version: "4.12" }
 
     runs-on: ${{ matrix.os }}
 
@@ -54,43 +53,25 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # cmake/g++/libgomp are needed everywhere: the conf-cmake/conf-c++
-      # build-deps check for them, and the vendored path builds with them.
-      - name: Install build toolchain
+      # cmake/g++/libgomp: the conf-cmake/conf-c++ build-deps check for
+      # them. libxgboost-dev is the distro package, as conf-libxgboost's
+      # depext installs it on Ubuntu >= 25.10. The exact 3.0.0 minimum is
+      # covered by the Distros workflow's Debian 13 job.
+      - name: Install toolchain and libxgboost (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config cmake g++ libgomp1
+          sudo apt-get install -y pkg-config cmake g++ libgomp1 libxgboost-dev
 
-      # The distro package, as conf-libxgboost's depext installs it on
-      # Ubuntu >= 25.10 (3.0.4 on 26.04). The exact 3.0.0 minimum is
-      # covered by the Distros workflow's Debian 13 job.
-      - name: Install system libxgboost (system mode only)
-        if: runner.os == 'Linux' && matrix.mode == 'system'
-        run: sudo apt-get install -y libxgboost-dev
-
-      - name: Install macOS build toolchain
+      # brew xgboost is what conf-libxgboost's depext installs on Homebrew.
+      - name: Install toolchain and libxgboost (macOS)
         if: runner.os == 'macOS'
-        run: brew install cmake pkg-config libomp
-
-      # On Homebrew, xgboost.opam depends on conf-libxgboost, whose build
-      # probes `pkg-config --exists xgboost`, and opam's depext always
-      # installs brew xgboost, so Homebrew users never vendor. The vendored
-      # job installs it anyway to get through the deps install, then hides
-      # it with an empty PKG_CONFIG_LIBDIR (below) to exercise the macOS
-      # vendored build (-force_load, keg-only libomp) that MacPorts and
-      # --no-depexts users get. No macOS runner comes without Homebrew.
-      - name: Install macOS system XGBoost
-        if: runner.os == 'macOS'
-        run: brew install xgboost
+        run: brew install cmake pkg-config libomp xgboost
 
       # OCaml 4.11's runtime declares primitives as `value (*)()`, which
-      # C23 (GCC 15's default, on ubuntu-26.04) reads as taking no
+      # C23 (GCC 15's default, on ubuntu-latest = 26.04) reads as taking no
       # arguments, so the compiler build fails in interp.c. Build it as
-      # gnu11. Also set on the 24.04 vendored job (where GCC 13 doesn't need
-      # it): the vendored build links its shared companions with OCaml's
-      # recorded c_compiler, and this keeps a compiler-with-flags case
-      # covered.
+      # gnu11. Other versions and macOS (clang) keep the default compiler.
       - name: Set up OCaml ${{ matrix.ocaml-version }}
         uses: ocaml/setup-ocaml@v3
         env:
@@ -104,70 +85,96 @@ jobs:
       - name: Install OCaml deps
         run: opam install ./xgboost.opam --deps-only --with-test --no-depexts --yes
 
-      # Hides brew xgboost on macOS; on ubuntu-24.04 there is nothing to
-      # hide, and this guards against a runner image that ships a .pc.
-      - name: Force vendored discovery
-        if: matrix.mode == 'vendored'
-        run: |
-          mkdir -p "$RUNNER_TEMP/empty-pkgconfig"
-          echo 'PKG_CONFIG_PATH=' >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_LIBDIR=$RUNNER_TEMP/empty-pkgconfig" >> "$GITHUB_ENV"
-
       # Also the conf-libxgboost template published to opam-repository.
       - name: Lint opam metadata
         run: opam lint xgboost.opam packaging/conf-libxgboost.opam
 
-      # Vendored mode: keep dune's cache between runs, so the CMake build of
-      # vendor/xgboost (the config/ rule) is restored instead of redone.
-      # Dune tracks the rule's declared inputs (discover.exe, vendor/), not
-      # the C++ compiler or OpenMP it uses, so the key also names the
-      # runner image (ImageOS, e.g. ubuntu24 / macos15). One entry per key:
-      # on an exact hit actions/cache saves nothing, so the entry neither
-      # multiplies per run nor grows; a change to vendor/ or config/ makes
-      # a new key.
-      - name: Compute dune cache key
-        if: matrix.mode == 'vendored'
-        id: dune-cache-key
-        run: echo "prefix=dune-${{ runner.os }}-${{ runner.arch }}-${ImageOS:-unknown}-ocaml${{ matrix.ocaml-version }}-${{ hashFiles('vendor/**', 'config/**') }}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore dune cache
-        if: matrix.mode == 'vendored'
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/dune
-          key: ${{ steps.dune-cache-key.outputs.prefix }}
-
-      # DUNE_CACHE=enabled also caches user rules (the CMake build is one);
-      # dune's default mode skips them. check-installed-linking.sh disables
-      # the cache itself for its fresh builds.
       - name: Build
-        env:
-          DUNE_CACHE: ${{ matrix.mode == 'vendored' && 'enabled' || 'disabled' }}
         run: opam exec -- dune build -p xgboost -j 4
 
       - name: Run tests
-        env:
-          DUNE_CACHE: ${{ matrix.mode == 'vendored' && 'enabled' || 'disabled' }}
         run: opam exec -- dune runtest -p xgboost -j 4
 
-      # Reuse the build above instead of building (and, in vendored mode,
-      # compiling XGBoost) a second time. DUNE_CACHE must match the Build
-      # step's: switching it from enabled to disabled makes dune re-run
-      # user rules, the CMake build among them.
+      # Reuses the build above (REUSE_BUILD).
       - name: Check installed consumer linking
         env:
           REUSE_BUILD: "1"
-          DUNE_CACHE: ${{ matrix.mode == 'vendored' && 'enabled' || 'disabled' }}
-        run: bash scripts/check-installed-linking.sh "$GITHUB_WORKSPACE" "${{ matrix.mode }}"
+        run: bash scripts/check-installed-linking.sh "$GITHUB_WORKSPACE" system
 
-      # The pure-C reference and the ASan run both link the system
-      # libxgboost, so they only make sense on the system-mode job. The
-      # ASan run preloads libasan without instrumenting anything: it
-      # checks the allocator and libc calls only (see run-asan.sh).
+      # The pure-C reference and the ASan run link the system libxgboost;
+      # once is enough. The ASan run preloads libasan without
+      # instrumenting anything: it checks the allocator and libc calls
+      # only (see run-asan.sh).
       - name: Build C reference
-        if: runner.os == 'Linux' && matrix.mode == 'system'
+        if: runner.os == 'Linux' && matrix.ocaml-version == '5.5'
         run: make -C bin/c_reference
 
       - name: Run tests under AddressSanitizer
-        if: runner.os == 'Linux' && matrix.mode == 'system'
+        if: runner.os == 'Linux' && matrix.ocaml-version == '5.5'
         run: ./scripts/run-asan.sh
+
+      # ocaml.org builds the API docs after a release; catch odoc errors
+      # in xgboost.mli before that.
+      - name: Build documentation
+        if: runner.os == 'Linux' && matrix.ocaml-version == '5.5'
+        run: |
+          opam install odoc --yes
+          opam exec -- dune build -p xgboost @doc
+
+  # Vendored path inside opam-repository CI's ocaml/opam images, with
+  # opam installing the depexts itself. Debian 12 packages only libxgboost
+  # < 3.0 and Alpine none, and both are outside conf-libxgboost's filter,
+  # so opam vendors there for real. Alpine adds musl (where #19's crash
+  # only showed) and arm64. See scripts/check-vendored-container.sh.
+  vendored:
+    name: vendored (${{ matrix.image }}${{ matrix.runner && ', arm64' || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: debian-12-ocaml-5.5 }
+          - { image: debian-12-ocaml-4.11 }
+          - { image: alpine-3.24-ocaml-5.5 }
+          - { image: alpine-3.24-ocaml-5.5, runner: ubuntu-24.04-arm }
+
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Keep dune's cache between runs, so the CMake build of
+      # vendor/xgboost (the config/ rule) is restored instead of redone.
+      # Dune tracks the rule's declared inputs (discover.exe, vendor/), not
+      # the C++ compiler or OpenMP it uses, so the key names the image and
+      # architecture. One entry per key: on an exact hit actions/cache
+      # saves nothing; a change to vendor/ or config/ makes a new key.
+      - name: Restore dune cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/dune-cache
+          key: dune-${{ matrix.image }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'config/**') }}
+
+      # The container runs as the image's opam user (uid 1000), not the
+      # runner's (1001), so it needs write access to the cache directory.
+      # The cache is a mount, on another filesystem than the build, and
+      # dune's default hardlink storage then silently stores nothing:
+      # copy instead.
+      - name: Build, test and check installed linking
+        run: |
+          mkdir -p "$RUNNER_TEMP/dune-cache"
+          chmod -R a+rwX "$RUNNER_TEMP/dune-cache"
+          docker run --rm \
+            -v "$PWD:/src:ro" \
+            -v "$RUNNER_TEMP/dune-cache:/dune-cache" \
+            -e DUNE_CACHE_ROOT=/dune-cache \
+            -e DUNE_CACHE_STORAGE_MODE=copy \
+            "ocaml/opam:${{ matrix.image }}" \
+            sh /src/scripts/check-vendored-container.sh
+
+      # Dune writes its cache files readable by their owner only, the
+      # container's opam user, so actions/cache (running as the runner's
+      # user) couldn't pack them and saved nothing. Give them back, even
+      # when the step above failed.
+      - name: Hand the dune cache back to the runner's user
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/dune-cache"
