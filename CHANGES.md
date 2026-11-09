@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- Fix use-after-frees across C calls. Two cases:
+  - Every OCaml version: functions taking a `Booster.t` or `DMatrix.t`
+    passed only the raw handle to C. If the caller held no other
+    reference (e.g. `Booster.predict_dense (make_booster ()) m`, or
+    `Booster.predict bst (DMatrix.of_bigarray2 x)`), a GC right before
+    the call could run the record's finaliser, which frees the
+    libxgboost object, and libxgboost then used it: a segfault in
+    `InplacePredictImpl` under the new test. Results borrowed from the
+    booster (`predict`, `predict_dense`, `save_model_buffer`,
+    `save_json_config`, `feature_score`) could likewise be read after
+    the booster was freed.
+  - OCaml 4.11 and 4.12: `Booster.predict_dense` kept its input
+    Bigarray alive with `ignore (Sys.opaque_identity m)` after the C
+    call, which the native backend of OCaml < 4.13 treats as pure and
+    deletes; a GC before the call then finalised the input, and
+    libxgboost read freed memory (valgrind: invalid reads in
+    `GBTree::InplacePredict` of a block freed by `caml_ba_finalize`).
+    This showed as a flaky qcheck property on 4.11/4.12.
+    (`boost_one_iter`'s `ignore (Sys.opaque_identity (grad, hess))` was
+    safe: the tuple allocation isn't deleted.)
+
+  Every such function now ends with `Internal.keep_alive` on its
+  records and arrays, after copying any borrowed result. `keep_alive` is
+  a never-inlined function, so it keeps its argument live on every OCaml
+  version. A new test, `test/xgboost/keep_alive.ml`, checks this
+  deterministically: the booster, DMatrix or array is only reachable
+  through the call (arrays also poison themselves when finalised), and
+  `Gc.Memprof` forces a full GC at every allocation during the call. It
+  skips itself on OCaml 5.0 and 5.1, which lack `Gc.Memprof`.
 - Packaging only: also depend on `conf-libxgboost` on Linux Mint
   releases whose base ships `libxgboost >= 3.0`, so they take the
   system-library fast path instead of compiling the vendored sources.

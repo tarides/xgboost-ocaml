@@ -2,6 +2,12 @@
  * model.
  *
  * Lifetime rules (see architecture plan):
+ *   - Functions pass [t.handle], a raw pointer, to C. If the caller holds
+ *     no other reference to [t], the record can be unreachable before the
+ *     call, and a GC there runs the finaliser, which frees the booster
+ *     libxgboost is about to use. So every function ends with
+ *     [Internal.keep_alive t] (and likewise for DMatrix arguments), after
+ *     copying any result borrowed from the booster.
  *   - The C-side XGBoost booster does not own its training DMatrices, only
  *     a snapshot of their pointers. We must keep the OCaml DMatrix.t live
  *     for as long as XGBoost might re-touch it.
@@ -53,13 +59,15 @@ let create ?(cache = []) () =
 
 let set_param t k v =
   check_live t;
-  Internal.xgb_check (F.xgbooster_set_param t.handle k v)
+  Internal.xgb_check (F.xgbooster_set_param t.handle k v);
+  Internal.keep_alive t
 
 let set_params t ps =
   check_live t;
   List.iter
     (fun (k, v) -> Internal.xgb_check (F.xgbooster_set_param t.handle k v))
-    ps
+    ps;
+  Internal.keep_alive t
 
 let update_one_iter t ~iter ~dtrain =
   check_live t;
@@ -97,7 +105,8 @@ let boost_one_iter t ~iter ~dtrain ~grad ~hess =
       Internal.xgb_check
         (F.xgbooster_train_one_iter t.handle (Dmatrix.handle dtrain)
            iter grad_json hess_json));
-  ignore (Sys.opaque_identity (grad, hess))
+  Internal.keep_alive grad;
+  Internal.keep_alive hess
 
 let eval_one_iter t ~iter ~evals =
   check_live t;
@@ -114,7 +123,10 @@ let eval_one_iter t ~iter ~evals =
   Internal.xgb_check
     (F.xgbooster_eval_one_iter t.handle iter
        (CArray.start dmats) (CArray.start names) (Internal.ulong n) out);
-  !@out
+  let result = !@out in
+  Internal.keep_alive t;
+  Internal.keep_alive evals;
+  result
 
 let num_features t =
   check_live t;
@@ -125,16 +137,20 @@ let num_features t =
         Internal.with_out_ulong (F.xgbooster_get_num_feature t.handle)
       in
       t.n_features <- Some n;
+      Internal.keep_alive t;
       n
 
 let boosted_rounds t =
   check_live t;
-  Internal.with_out_int (F.xgbooster_boosted_rounds t.handle)
+  let n = Internal.with_out_int (F.xgbooster_boosted_rounds t.handle) in
+  Internal.keep_alive t;
+  n
 
 let reset t =
   check_live t;
   Internal.xgb_check (F.xgbooster_reset t.handle);
-  t.n_features <- None
+  t.n_features <- None;
+  Internal.keep_alive t
 
 let predict ?(ntree_limit = 0) ?(training = false) t dmat =
   check_live t;
@@ -147,7 +163,11 @@ let predict ?(ntree_limit = 0) ?(training = false) t dmat =
        out_len out_result);
   let len = Internal.ulong_to_int !@out_len in
   let src = !@out_result in
-  Internal.copy_borrowed_float32 ~len ~src
+  (* The result is borrowed from the booster: copy it before letting go. *)
+  let result = Internal.copy_borrowed_float32 ~len ~src in
+  Internal.keep_alive t;
+  Internal.keep_alive dmat;
+  result
 
 (* In-place predict from a Bigarray.Array2. Avoids allocating a transient
    DMatrix per call — useful for tight inference loops. The input is
@@ -179,7 +199,7 @@ let predict_dense ?(ntree_limit = 0) ?(training = false)
   Internal.xgb_check
     (F.xgbooster_predict_from_dense t.handle values_json config_json
        null out_shape out_dim out_result);
-  ignore (Sys.opaque_identity m);
+  Internal.keep_alive m;
   let dim = Internal.ulong_to_int !@out_dim in
   let shape_ptr = !@out_shape in
   let total = ref 1 in
@@ -188,16 +208,20 @@ let predict_dense ?(ntree_limit = 0) ?(training = false)
   done;
   let len = !total in
   let src = !@out_result in
-  Internal.copy_borrowed_float32 ~len ~src
+  let result = Internal.copy_borrowed_float32 ~len ~src in
+  Internal.keep_alive t;
+  result
 
 let save_model t ~path =
   check_live t;
-  Internal.xgb_check (F.xgbooster_save_model t.handle path)
+  Internal.xgb_check (F.xgbooster_save_model t.handle path);
+  Internal.keep_alive t
 
 let load_model t ~path =
   check_live t;
   Internal.xgb_check (F.xgbooster_load_model t.handle path);
-  t.n_features <- None
+  t.n_features <- None;
+  Internal.keep_alive t
 
 let save_model_buffer ?(format = "{\"format\": \"json\"}") t =
   check_live t;
@@ -207,7 +231,9 @@ let save_model_buffer ?(format = "{\"format\": \"json\"}") t =
     (F.xgbooster_save_model_to_buffer t.handle format blen bptr);
   let len = Internal.ulong_to_int !@blen in
   let src = !@bptr in
-  Internal.copy_borrowed_bytes ~len ~src
+  let result = Internal.copy_borrowed_bytes ~len ~src in
+  Internal.keep_alive t;
+  result
 
 let load_model_buffer t buf =
   check_live t;
@@ -220,7 +246,8 @@ let load_model_buffer t buf =
   Internal.xgb_check
     (F.xgbooster_load_model_from_buffer t.handle
        (to_voidp (CArray.start carr)) (Internal.ulong len));
-  t.n_features <- None
+  t.n_features <- None;
+  Internal.keep_alive t
 
 let save_json_config t =
   check_live t;
@@ -230,11 +257,14 @@ let save_json_config t =
     (F.xgbooster_save_json_config t.handle blen bptr);
   let len = Internal.ulong_to_int !@blen in
   let src = !@bptr in
-  Bytes.to_string (Internal.copy_borrowed_bytes ~len ~src)
+  let result = Bytes.to_string (Internal.copy_borrowed_bytes ~len ~src) in
+  Internal.keep_alive t;
+  result
 
 let load_json_config t json =
   check_live t;
-  Internal.xgb_check (F.xgbooster_load_json_config t.handle json)
+  Internal.xgb_check (F.xgbooster_load_json_config t.handle json);
+  Internal.keep_alive t
 
 let free t =
   if not !(t.freed) then begin
@@ -301,6 +331,7 @@ let feature_score ?(importance_type = "weight") t =
     done;
     result := (name, !score) :: !result
   done;
+  Internal.keep_alive t;
   !result
 
 (* Expert-only no-copy predict. The returned Bigarray wraps libxgboost's
@@ -321,8 +352,13 @@ module Unsafe = struct
          out_len out_result);
     let len = Internal.ulong_to_int !@out_len in
     let src = !@out_result in
-    if len = 0 then
-      Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 0
-    else
-      bigarray_of_ptr array1 len Bigarray.Float32 src
+    let result =
+      if len = 0 then
+        Bigarray.Array1.create Bigarray.float32 Bigarray.c_layout 0
+      else
+        bigarray_of_ptr array1 len Bigarray.Float32 src
+    in
+    Internal.keep_alive t;
+    Internal.keep_alive dmat;
+    result
 end
