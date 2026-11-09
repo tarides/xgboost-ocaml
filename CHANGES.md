@@ -37,7 +37,8 @@
   deterministically: the booster, DMatrix or array is only reachable
   through the call (arrays also poison themselves when finalised), and
   `Gc.Memprof` forces a full GC at every allocation during the call. It
-  skips itself on OCaml 5.0 and 5.1, which lack `Gc.Memprof`.
+  skips itself on OCaml 5.0 to 5.2, where `Gc.Memprof` isn't
+  implemented.
 - Packaging only: also depend on `conf-libxgboost` on Linux Mint
   releases whose base ships `libxgboost >= 3.0`, so they take the
   system-library fast path instead of compiling the vendored sources.

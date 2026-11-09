@@ -25,8 +25,8 @@
  * If the binding lets the input die before the C call, libxgboost reads
  * poisoned values and the result differs from the reference.
  *
- * Gc.Memprof isn't implemented on OCaml 5.0 and 5.1; the test skips
- * itself there. *)
+ * Gc.Memprof isn't implemented on OCaml 5.0 to 5.2 (start fails); the
+ * test skips itself there. *)
 
 open Bigarray
 
@@ -76,7 +76,8 @@ let with_gc_at_every_allocation f =
   let tracker =
     { Gc.Memprof.null_tracker with alloc_minor = force; alloc_major = force }
   in
-  (* [start] returns unit before OCaml 5.2 and a profile from 5.2 on. *)
+  (* [start] returns unit before OCaml 5.2 and a profile from 5.2 on; it
+     fails on 5.0 to 5.2, where memprof isn't implemented. *)
   (match Gc.Memprof.start ~sampling_rate:1.0 tracker with
    | _ -> ()
    | exception (Failure _ | Invalid_argument _) ->
