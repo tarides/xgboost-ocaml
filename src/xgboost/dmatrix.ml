@@ -120,7 +120,8 @@ let set_label t labels =
             { expected = (t.rows, 0); got = (n, 0) }));
   Internal.xgb_check
     (F.xgdmatrix_set_float_info t.handle "label"
-       (bigarray_start array1 labels) (Internal.ulong n))
+       (bigarray_start array1 labels) (Internal.ulong n));
+  Internal.keep_alive t
 
 let set_weight t weights =
   check_live t;
@@ -132,11 +133,14 @@ let set_weight t weights =
             { expected = (t.rows, 0); got = (n, 0) }));
   Internal.xgb_check
     (F.xgdmatrix_set_float_info t.handle "weight"
-       (bigarray_start array1 weights) (Internal.ulong n))
+       (bigarray_start array1 weights) (Internal.ulong n));
+  Internal.keep_alive t
 
 let num_non_missing t =
   check_live t;
-  Internal.with_out_ulong (F.xgdmatrix_num_non_missing t.handle)
+  let n = Internal.with_out_ulong (F.xgdmatrix_num_non_missing t.handle) in
+  Internal.keep_alive t;
+  n
 
 let slice t idxset =
   check_live t;

@@ -7,5 +7,9 @@
  (libraries xgboost alcotest qcheck-core qcheck-alcotest))
 
 (test
+ (name keep_alive)
+ (libraries xgboost alcotest))
+
+(test
  (name test_eval_cv)
  (libraries xgboost alcotest))

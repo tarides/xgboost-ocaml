@@ -195,11 +195,12 @@ let prop_predict_pure =
       Xgboost.DMatrix.free dtrain;
       ok)
 
-(* Slice consistency: predict_dense on the first k rows of [m]
-   approximately equals the first k entries of predict_dense on the
-   full [m] (within 1e-5; libxgboost's hist quantisation can introduce
-   sub-precision differences when the slice's per-column stats differ
-   from the full matrix's). *)
+(* Slice consistency: predict_dense on the first k rows of [m] equals the
+   first k entries of predict_dense on the full [m]: same model, same
+   rows. A difference means libxgboost read other data than [m]'s, as it
+   did now and then on OCaml < 4.13 when the slice was freed before the
+   call (the 1e-4 tolerance only absorbs float noise). keep_alive.ml
+   tests that deterministically. *)
 let prop_slice_consistency =
   QCheck.Test.make ~name:"predict_dense on slice ≈ prefix" ~count:100
     arb_size (fun (rows, cols) ->
