@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.7 (2026-11-09)
+## 0.3.0 (2026-11-09)
 
 - Require `dune >= 3.23` (was `>= 3.18`). The two-library provider
   selection reads `%{read:../../../config/provider/vendored}` in a
