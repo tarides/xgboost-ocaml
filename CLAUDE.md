@@ -23,7 +23,7 @@ opam lint xgboost.opam
 
 CI (`ci.yml`) runs OCaml 5.5 and 4.11 on the system path (ubuntu-latest, macos-latest; macOS uses 4.12 instead of 4.11, which predates arm64 macOS and whose empty-archive `ar` workaround fails with macOS 26's `ar`) and on the vendored path in `ocaml/opam` images (Debian 12 on 5.5 and 4.11, Alpine 3.24 on amd64 and arm64) via `scripts/check-vendored-container.sh`. The weekly `distros.yml` does a full `opam install` (with depexts) and asserts the provider on the platforms opam-repository CI uses: its other `ocaml/opam` images (Debian 12, Alpine 3.24 and Ubuntu 26.04 are left to `ci.yml`), arm64, macOS/Homebrew and FreeBSD, plus OCaml 4.11/4.14 and a lower-bounds job (`LOWER_BOUNDS=1`).
 
-Running a single test: test executables are `test/bindings/check`, `test/xgboost/{check,props,test_eval_cv}`. Use alcotest filtering, for example:
+Running a single test: test executables are `test/bindings/check`, `test/xgboost/{check,props,keep_alive,test_eval_cv}`. Use alcotest filtering, for example:
 
 ```sh
 opam exec -- dune exec test/xgboost/check.exe -- test smoke 7   # group "smoke", case index 7 (csr)
@@ -57,7 +57,7 @@ Three layers, called "layer B" and "layer C" in the code comments:
 
 The in-tree build and tests can pass while installed consumers fail to link. Only `check-installed-linking.sh` catches that. Before 0.2.2, absolute `_build` archive paths ended up in the installed `.cmxa`.
 
-- Two definitions of the `xgboost_bindings` library (public name `xgboost.bindings`) are mutually exclusive through `enabled_if %{read:.../config/provider/{system,vendored}}` (needs dune >= 3.15 for `%{read}` in a library's `enabled_if` and >= 3.16 for same-name libraries). `config/provider/detect.ml` writes those `true`/`false` files plus the system path's pkg-config flags. It lives in its own directory because dune reads the files while loading other directories' rules.
+- Two definitions of the `xgboost_bindings` library (public name `xgboost.bindings`) are mutually exclusive through `enabled_if %{read:.../config/provider/{system,vendored}}` (uses dune 3.15's `%{read}` in a library's `enabled_if` and 3.16's same-name libraries, but needs dune >= 3.23: older dune rejects the relative `%{read:../../../config/provider/...}` path as "outside the workspace"; the lower-bounds Distros job caught that). `config/provider/detect.ml` writes those `true`/`false` files plus the system path's pkg-config flags. It lives in its own directory because dune reads the files while loading other directories' rules.
 - `src/bindings/system/` links the system lib with the pkg-config flags. `src/bindings/vendored/` uses `(foreign_archives xgboost_vendored dmlc_vendored)`, so dune links, installs and locates the archives itself. The CMake rule in `config/dune` has the same `enabled_if`, so nothing vendored is built or installed on the system path.
 - The vendored path also builds `dllxgboost_vendored.so` (both archives whole-archived; `-force_load` on macOS) and an empty `dlldmlc_vendored.so` for plain bytecode, installed in `lib/stublibs`. dmlc must be loaded only once; `check-installed-linking.sh` checks this with `nm`. The `.so`s are linked with OCaml's recorded `c_compiler`, which may carry flags (`config/common/common.ml` splits it).
 - Never put absolute or build-directory paths in the link flags.
@@ -65,7 +65,8 @@ The in-tree build and tests can pass while installed consumers fail to link. Onl
 ### Lifetime/FFI invariants (the main source of subtle bugs)
 
 - Handles are records finalised with `Gc.finalise_last`. Explicit `free` must stay idempotent and safe if the finaliser runs later.
-- Any Bigarray whose address is passed to C, including through JSON array-interface strings, must stay reachable for the whole call. The code does this with `ignore (Sys.opaque_identity x)` after the call, or by storing it in the resulting record (DMatrix pins its source arrays).
+- Anything a C call uses must stay reachable until the call, and any copy of a result it borrows, is done: the `Booster.t`/`DMatrix.t` records (only their raw handle reaches C, and their finaliser frees the libxgboost object) and every Bigarray whose address is passed, including through JSON array-interface strings. End the function with `Internal.keep_alive x` (after the copy), or store `x` in the resulting record (DMatrix pins its source arrays). Don't use `ignore (Sys.opaque_identity x)`: OCaml < 4.13 deletes it (`Iopaque` counted as pure), which freed `predict_dense`'s input on 4.11 (#27). `keep_alive` is a never-inlined function, so it works on every version.
+- `test/xgboost/keep_alive.ml` checks this deterministically: the value is only reachable through the call, Bigarrays poison themselves when finalised, and `Gc.Memprof` forces a full GC at every allocation during the call (skipped on OCaml 5.0–5.2, which lack memprof). A new function that passes a handle or an array to C should get a case there.
 - `Booster.t` permanently pins its `cache` DMatrices and pins `dtrain` for the duration of `update_one_iter`/`boost_one_iter`, because libxgboost doesn't own those snapshots.
 - Streaming (`streaming.ml`) uses `Foreign.funptr` trampolines from ctypes-foreign (no C shim). Batches are pinned in a closure-captured ref while libxgboost may still use them.
 - Borrowed prediction pointers are invalidated by the next call on the same booster. `predict` copies eagerly; only `Booster.Unsafe.predict_borrowed` skips the copy.
