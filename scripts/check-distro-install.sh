@@ -140,6 +140,9 @@ opam exec -- dune build --root "$consumer" probe.exe probe.bc probe.bc.exe
 opam exec -- ocamlrun "$consumer/_build/default/probe.bc"
 "$consumer/_build/default/probe.bc.exe"
 
+# The toplevel loads xgboost through topfind, from ocamlfind, which
+# xgboost doesn't depend on: with lower bounds nothing pulls it in.
+opam install ocamlfind
 # On OCaml 4.x, #thread must load the systhreads stubs before
 # ctypes-foreign's (see check-installed-linking.sh). Harmless on 5.x.
 cat > "$consumer/toplevel.ml" <<'TOPLEVEL'
