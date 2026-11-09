@@ -15,6 +15,20 @@ let ulong_to_int = Unsigned.UInt64.to_int
 let usize = Unsigned.Size_t.of_int
 let uintv = Unsigned.UInt.of_int
 
+(* Keep [x] reachable up to this point, e.g. a Bigarray whose address a C
+ * call reads through a JSON __array_interface__ string. Call it after
+ * that C call.
+ *
+ * [ignore (Sys.opaque_identity x)] alone is not enough on OCaml < 4.13:
+ * there the native backend treats [Iopaque] as a pure operation
+ * (amd64 [Proc.op_is_pure]), so its dead-code pass deletes it when the
+ * result is unused, and [x] can be collected before the C call. On 4.11
+ * that freed a [predict_dense] input Bigarray during the allocations that
+ * precede the call (valgrind: invalid reads in GBTree::InplacePredict of
+ * a block freed by caml_ba_finalize). A call to a function that is never
+ * inlined keeps its argument live until the call, on every version. *)
+let[@inline never] keep_alive x = ignore (Sys.opaque_identity x)
+
 let xgb_check rc =
   if rc <> 0 then
     raise (Error.Xgboost_error (Error.Xgb_error (F.xgb_get_last_error ())))
