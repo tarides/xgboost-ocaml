@@ -141,8 +141,11 @@ opam exec -- ocamlrun "$consumer/_build/default/probe.bc"
 "$consumer/_build/default/probe.bc.exe"
 
 # The toplevel loads xgboost through topfind, from ocamlfind, which
-# xgboost doesn't depend on: with lower bounds nothing pulls it in.
-opam install ocamlfind
+# xgboost doesn't depend on: with lower bounds nothing pulls it in. Name
+# xgboost in the same request: the lower-bounds criteria favour
+# removals, and opam otherwise removed xgboost and its dependencies
+# ("1 to install | 15 to remove") to install ocamlfind.
+opam install ocamlfind "xgboost.$version"
 # On OCaml 4.x, #thread must load the systhreads stubs before
 # ctypes-foreign's (see check-installed-linking.sh). Harmless on 5.x.
 cat > "$consumer/toplevel.ml" <<'TOPLEVEL'

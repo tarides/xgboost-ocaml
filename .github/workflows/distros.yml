@@ -126,9 +126,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # opam-pin: false, or setup-ocaml pins the checkout's *.opam files
+      # as version dev, and opam can't install the 0.0.0+ci release that
+      # check-distro-install.sh serves from a local repository.
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: "5.5"
+          opam-pin: false
 
       - name: opam install and installed consumer
         run: SRC="$GITHUB_WORKSPACE" sh scripts/check-distro-install.sh system
