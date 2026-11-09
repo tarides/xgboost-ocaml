@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Require `dune >= 3.23` (was `>= 3.18`). The two-library provider
+  selection reads `%{read:../../../config/provider/vendored}` in a
+  library's `enabled_if`, and dune before 3.23 rejects that path as
+  "outside the workspace", so the package didn't build with dune
+  3.18–3.22. Found by the new lower-bounds Distros job (dune 3.18.2).
+  Tested: 3.18.2, 3.19.0, 3.19.1, 3.20.0, 3.20.1, 3.20.2 and 3.22.2
+  fail; 3.23.0 and 3.24.0 build it.
 - Packaging only: also depend on `conf-libxgboost` on Linux Mint
   releases whose base ships `libxgboost >= 3.0`, so they take the
   system-library fast path instead of compiling the vendored sources.

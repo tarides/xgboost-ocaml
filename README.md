@@ -424,9 +424,11 @@ definitions of the `xgboost_bindings` library, enabled by
 
 Both compile the same ctypes descriptions from `src/bindings/common/`,
 and everything downstream depends on `xgboost_bindings` without knowing
-which one it gets. This relies on dune 3.15 (`%{read:...}` in a library's
-`enabled_if`) and 3.16 (two libraries with the same name, provided only
-one is enabled). The decision lives in its own directory, with its own
+which one it gets. This relies on `%{read:...}` in a library's
+`enabled_if` (dune 3.15) and two libraries with the same name, provided
+only one is enabled (3.16), but before dune 3.23 the relative path in
+`%{read:../../../config/provider/...}` is rejected as "outside the
+workspace", hence `dune >= 3.23`. The decision lives in its own directory, with its own
 executable, because dune reads those files while loading rules
 elsewhere.
 
