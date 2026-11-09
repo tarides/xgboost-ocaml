@@ -121,16 +121,23 @@ jobs:
           opam install odoc --yes
           opam exec -- dune build -p xgboost @doc
 
-  # Vendored path on Debian 12, inside the ocaml/opam image that
-  # opam-repository CI uses, with opam installing the depexts itself.
-  # See scripts/check-vendored-container.sh.
-  vendored-debian:
+  # Vendored path inside opam-repository CI's ocaml/opam images, with
+  # opam installing the depexts itself. Debian 12 packages only libxgboost
+  # < 3.0 and Alpine none, and both are outside conf-libxgboost's filter,
+  # so opam vendors there for real. Alpine adds musl (where #19's crash
+  # only showed) and arm64. See scripts/check-vendored-container.sh.
+  vendored:
+    name: vendored (${{ matrix.image }}${{ matrix.runner && ', arm64' || '' }})
     strategy:
       fail-fast: false
       matrix:
-        ocaml-version: ["5.5", "4.11"]
+        include:
+          - { image: debian-12-ocaml-5.5 }
+          - { image: debian-12-ocaml-4.11 }
+          - { image: alpine-3.24-ocaml-5.5 }
+          - { image: alpine-3.24-ocaml-5.5, runner: ubuntu-24.04-arm }
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -139,20 +146,20 @@ jobs:
       # vendor/xgboost (the config/ rule) is restored instead of redone.
       # Dune tracks the rule's declared inputs (discover.exe, vendor/), not
       # the C++ compiler or OpenMP it uses, so the key names the image and
-      # OCaml version. One entry per key: on an exact hit actions/cache
+      # architecture. One entry per key: on an exact hit actions/cache
       # saves nothing; a change to vendor/ or config/ makes a new key.
       - name: Restore dune cache
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/dune-cache
-          key: dune-debian-12-ocaml${{ matrix.ocaml-version }}-${{ hashFiles('vendor/**', 'config/**') }}
+          key: dune-${{ matrix.image }}-${{ runner.arch }}-${{ hashFiles('vendor/**', 'config/**') }}
 
       # The container runs as the image's opam user (uid 1000), not the
       # runner's (1001), so it needs write access to the cache directory.
       # The cache is a mount, on another filesystem than the build, and
       # dune's default hardlink storage then silently stores nothing:
       # copy instead.
-      - name: Build, test and check installed linking (Debian 12, vendored)
+      - name: Build, test and check installed linking
         run: |
           mkdir -p "$RUNNER_TEMP/dune-cache"
           chmod -R a+rwX "$RUNNER_TEMP/dune-cache"
@@ -161,7 +168,7 @@ jobs:
             -v "$RUNNER_TEMP/dune-cache:/dune-cache" \
             -e DUNE_CACHE_ROOT=/dune-cache \
             -e DUNE_CACHE_STORAGE_MODE=copy \
-            "ocaml/opam:debian-12-ocaml-${{ matrix.ocaml-version }}" \
+            "ocaml/opam:${{ matrix.image }}" \
             sh /src/scripts/check-vendored-container.sh
 
       # Dune writes its cache files readable by their owner only, the

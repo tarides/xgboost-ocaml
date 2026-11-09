@@ -10,9 +10,10 @@ name: Distros
 # and 4.14 next to 5.5, and a lower-bounds job. See
 # scripts/check-distro-install.sh.
 #
-# Debian 12 and Ubuntu 26.04 are left out: ci.yml already covers them on
-# every PR (vendored-debian in ocaml/opam:debian-12, system on
-# ubuntu-latest = 26.04), with the same OCaml and libxgboost.
+# Debian 12, Alpine 3.24 (amd64 and arm64) and Ubuntu 26.04 are left
+# out: ci.yml already covers them on every PR (its vendored job runs in
+# the same ocaml/opam images, its system job on ubuntu-latest = 26.04),
+# with the same OCaml and libxgboost.
 #
 # Too many jobs (most build XGBoost) for every push or PR: run it by hand
 # (Actions > Distros > Run workflow) and once a week, which also catches
@@ -20,6 +21,14 @@ name: Distros
 
 on:
   workflow_dispatch:
+    inputs:
+      only:
+        description: >-
+          Run only the jobs whose name contains this text, e.g.
+          "lower bounds", "freebsd", "arm64", "debian-13" or
+          "ocaml-4.11". Empty runs them all.
+        required: false
+        default: ""
   schedule:
     - cron: '17 3 * * 1'  # Mondays, 03:17 UTC
 
@@ -36,38 +45,65 @@ jobs:
   # the ocaml/opam tag, `provider` the native path the job must end up
   # with, `runner` overrides the host (arm64 jobs), and `lower-bounds`
   # makes opam pick the oldest dependency versions xgboost.opam allows.
+  # The ocaml/opam jobs, filtered by the `only` input (always empty on
+  # the weekly run). One JSON object per line; `#` lines are comments.
+  # `image` is the ocaml/opam tag, `provider` the native path the job
+  # must end up with, `runner` overrides the host (arm64), and
+  # `lower_bounds` makes opam pick the oldest dependency versions
+  # xgboost.opam allows.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          grep -v '^ *#' > jobs.jsonl <<'JOBS'
+          {"image": "archlinux-ocaml-5.5", "provider": "vendored"}
+          {"image": "centos-10-ocaml-5.5", "provider": "vendored"}
+          # Oldest RHEL-family toolchain still built (GCC 11).
+          {"image": "centos-9-ocaml-5.5", "provider": "vendored"}
+          # libxgboost-dev 3.0.0: the only job on the exact minimum.
+          {"image": "debian-13-ocaml-5.5", "provider": "system"}
+          # The declared minimum OCaml, through a real opam install.
+          {"image": "debian-13-ocaml-4.11", "provider": "system"}
+          # Oldest versions of every dependency, as opam-repository CI's
+          # lower-bounds job does.
+          {"image": "debian-13-ocaml-5.5", "provider": "system", "lower_bounds": true}
+          # libxgboost-dev 3.3.0: the only Linux job on a libxgboost newer
+          # than 3.0.x (config/provider has no upper bound).
+          {"image": "debian-testing-ocaml-5.5", "provider": "system"}
+          {"image": "fedora-44-ocaml-5.5", "provider": "vendored"}
+          # OCaml 4.14 (LTS), between the 4.11 minimum and 5.5.
+          {"image": "fedora-44-ocaml-4.14", "provider": "vendored"}
+          {"image": "opensuse-16.0-ocaml-5.5", "provider": "vendored"}
+          {"image": "opensuse-tumbleweed-ocaml-5.5", "provider": "vendored"}
+          # Oldest Ubuntu still built (GCC 11, CMake 3.22, libxgboost 1.5).
+          {"image": "ubuntu-22.04-ocaml-5.5", "provider": "vendored"}
+          {"image": "ubuntu-24.04-ocaml-5.5", "provider": "vendored"}
+          # arm64, on GitHub's arm64 runners (the images are multi-arch).
+          # (Alpine arm64, vendored, is in ci.yml.)
+          {"image": "debian-13-ocaml-5.5", "provider": "system", "runner": "ubuntu-24.04-arm"}
+          JOBS
+          matrix=$(jq -sc --arg only "$ONLY" '
+            map(. + {name: (.image
+                            + (if .runner then " (arm64)" else "" end)
+                            + (if .lower_bounds then " (lower bounds)" else "" end)
+                            + " → " + .provider)})
+            | map(select(.name | contains($only)))' jobs.jsonl)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          jq -r '.[].name' <<<"$matrix"
+
   install:
-    name: ${{ matrix.image }}${{ matrix.runner && ' (arm64)' || '' }}${{ matrix.lower-bounds && ' (lower bounds)' || '' }} → ${{ matrix.provider }}
+    needs: plan
+    if: needs.plan.outputs.matrix != '[]'
+    name: ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { image: alpine-3.24-ocaml-5.5, provider: vendored }
-          - { image: archlinux-ocaml-5.5, provider: vendored }
-          - { image: centos-10-ocaml-5.5, provider: vendored }
-          # Oldest RHEL-family toolchain still built (GCC 11).
-          - { image: centos-9-ocaml-5.5, provider: vendored }
-          # libxgboost-dev 3.0.0: the only job on the exact minimum.
-          - { image: debian-13-ocaml-5.5, provider: system }
-          # The declared minimum OCaml, through a real opam install.
-          - { image: debian-13-ocaml-4.11, provider: system }
-          # Oldest versions of every dependency, as opam-repository CI's
-          # lower-bounds job does.
-          - { image: debian-13-ocaml-5.5, provider: system, lower-bounds: true }
-          # libxgboost-dev 3.3.0: the only Linux job on a libxgboost newer
-          # than 3.0.x (config/provider has no upper bound).
-          - { image: debian-testing-ocaml-5.5, provider: system }
-          - { image: fedora-44-ocaml-5.5, provider: vendored }
-          # OCaml 4.14 (LTS), between the 4.11 minimum and 5.5.
-          - { image: fedora-44-ocaml-4.14, provider: vendored }
-          - { image: opensuse-16.0-ocaml-5.5, provider: vendored }
-          - { image: opensuse-tumbleweed-ocaml-5.5, provider: vendored }
-          # Oldest Ubuntu still built (GCC 11, CMake 3.22, libxgboost 1.5).
-          - { image: ubuntu-22.04-ocaml-5.5, provider: vendored }
-          - { image: ubuntu-24.04-ocaml-5.5, provider: vendored }
-          # arm64, on GitHub's arm64 runners (the images are multi-arch).
-          - { image: debian-13-ocaml-5.5, provider: system, runner: ubuntu-24.04-arm }
-          - { image: alpine-3.24-ocaml-5.5, provider: vendored, runner: ubuntu-24.04-arm }
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
     timeout-minutes: 60
     steps:
@@ -76,13 +112,14 @@ jobs:
       - name: opam install and installed consumer
         run: |
           docker run --rm -v "$PWD:/src:ro" \
-            -e LOWER_BOUNDS=${{ matrix.lower-bounds && '1' || '0' }} \
+            -e LOWER_BOUNDS=${{ matrix.lower_bounds && '1' || '0' }} \
             "ocaml/opam:${{ matrix.image }}" \
             sh /src/scripts/check-distro-install.sh ${{ matrix.provider }}
 
   # Homebrew, with opam installing brew xgboost through conf-libxgboost's
   # depext itself (ci.yml's macOS jobs install it by hand, --no-depexts).
   macos:
+    if: contains('macos-latest (Homebrew) → system', inputs.only)
     name: macos-latest (Homebrew) → system
     runs-on: macos-latest
     timeout-minutes: 60
@@ -99,6 +136,7 @@ jobs:
   # FreeBSD, in a VM: opam-repository CI tests it, and conf-libxgboost
   # lists it (misc/xgboost is 3.4.2). opam runs as root in the VM.
   freebsd:
+    if: contains('freebsd-15 → system', inputs.only)
     name: freebsd-15 → system
     runs-on: ubuntu-latest
     timeout-minutes: 90

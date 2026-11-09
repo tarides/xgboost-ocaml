@@ -36,8 +36,11 @@ src=${SRC:-/src}
 export OPAMYES=1 OPAMCONFIRMLEVEL=unsafe-yes OMP_NUM_THREADS=1
 
 if [ "${LOWER_BOUNDS:-0}" = 1 ]; then
-  # opam-repository CI's lower-bounds criteria: prefer the oldest
-  # versions, i.e. minimise the version lag the default solver maximises.
+  # As opam-repository CI's lower-bounds job (ocurrent/opam-repo-ci,
+  # opam-ci-check/lib/opam_build.ml): the 0install solver with criteria
+  # that prefer the oldest versions. The default mccs solver times out
+  # on them, even given 20 minutes.
+  opam option solver=builtin-0install
   criteria='+removed,+count[version-lag,solution]'
   export OPAMCRITERIA="$criteria" OPAMFIXUPCRITERIA="$criteria" \
     OPAMUPGRADECRITERIA="$criteria"
@@ -73,15 +76,43 @@ fi
 cp -R "$src" "$HOME/xgboost"
 rm -rf "$HOME/xgboost/_build"
 cd "$HOME/xgboost"
-# --kind=path: pin the files as they are, not a git revision, so a copy
-# of a git worktree (whose .git points outside the container) or of a
-# checkout with uncommitted changes works too.
-opam pin add -n --kind=path xgboost .
-opam install --with-test xgboost
+
+# Install it as opam-repository CI does: as a released package, from a
+# source tarball, not as a pin. A pin is a development package, for which
+# opam runs `dune subst` ({dev} in xgboost.opam); that needs git version
+# information, which opam strips when copying a path pin, and dune < 3.20
+# (what the lower-bounds job picks) then fails. The tarball carries the
+# files as they are, uncommitted changes included.
+version=0.0.0+ci
+tarball="$HOME/xgboost-$version.tar.gz"
+tar --exclude=./.git --exclude=./_build -czf "$tarball" .
+sha256() {
+  if command -v sha256sum > /dev/null; then sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum > /dev/null; then shasum -a 256 "$1" | cut -d' ' -f1
+  else sha256 -q "$1"   # FreeBSD
+  fi
+}
+repo="$HOME/ci-opam-repository"
+mkdir -p "$repo/packages/xgboost/xgboost.$version"
+printf 'opam-version: "2.0"\n' > "$repo/repo"
+{
+  cat xgboost.opam
+  printf 'url {\n  src: "file://%s"\n  checksum: "sha256=%s"\n}\n' \
+    "$tarball" "$(sha256 "$tarball")"
+} > "$repo/packages/xgboost/xgboost.$version/opam"
+opam repository add ci "$repo" --this-switch --rank=1
+
+if [ "${LOWER_BOUNDS:-0}" = 1 ]; then
+  # Like opam-repository CI, build without tests: test-only dependencies
+  # aren't part of what the lower-bounds job checks.
+  opam install "xgboost.$version"
+else
+  opam install --with-test "xgboost.$version"
+fi
 if [ "${LOWER_BOUNDS:-0}" = 1 ]; then
   echo "== dependency versions picked:"
   opam list --installed --columns=name,version \
-    dune dune-configurator ctypes ctypes-foreign alcotest qcheck-core qcheck-alcotest
+    dune dune-configurator ctypes ctypes-foreign integers
 fi
 
 lib=$(opam var lib)

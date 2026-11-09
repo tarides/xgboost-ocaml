@@ -1,7 +1,8 @@
 #!/bin/sh
 # Build, test and check the installed linking of xgboost on the vendored
 # path, inside an ocaml/opam image (CI uses debian-12, which packages
-# only libxgboost < 3.0 and is outside conf-libxgboost's filter).
+# only libxgboost < 3.0, and alpine-3.24, which packages none; both are
+# outside conf-libxgboost's filter).
 #
 # Run as the image's opam user, with the checkout mounted read-only at
 # /src:
